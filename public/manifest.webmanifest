@@ -1,0 +1,10 @@
+{
+  "name": "Bernard · Stock du foyer",
+  "short_name": "Bernard",
+  "lang": "fr",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f5f1",
+  "theme_color": "#2f6b4f",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

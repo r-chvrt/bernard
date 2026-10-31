@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2f6b4f">
+  <meta name="color-scheme" content="light dark">
+  <title>Bernard · Stock du foyer</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="app.css">
+  <script src="dictionary.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Aller au contenu</a>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/" aria-label="Bernard, accueil">
+        <img src="icon.svg" alt="" width="32" height="32">
+        <span><strong>Bernard</strong><small>Stock du foyer</small></span>
+      </a>
+      <nav class="tabs" aria-label="Navigation principale">
+        <a href="#/" data-view="all"><svg aria-hidden="true"><use href="#i-list"/></svg><span>Tout</span></a>
+        <a href="#/ouverts" data-view="open"><svg aria-hidden="true"><use href="#i-open"/></svg><span>Ouverts</span></a>
+        <a href="#/fermes" data-view="closed"><svg aria-hidden="true"><use href="#i-box"/></svg><span>Fermés</span></a>
+        <a href="#/parametres" data-view="settings"><svg aria-hidden="true"><use href="#i-gear"/></svg><span>Paramètres</span></a>
+      </nav>
+      <button type="button" class="btn btn-primary add-desktop" data-action="add">
+        <svg aria-hidden="true"><use href="#i-plus"/></svg> Ajouter un produit
+      </button>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <div id="loading" class="loading" role="status">Chargement…</div>
+
+    <!-- Vues produits -->
+    <section id="view-list" hidden>
+      <div class="view-head">
+        <h1 id="list-title">Tout le stock</h1>
+        <button type="button" class="btn btn-ghost" data-action="print">
+          <svg aria-hidden="true"><use href="#i-print"/></svg> Imprimer
+        </button>
+      </div>
+
+      <div id="summary" class="summary" aria-label="Résumé"></div>
+
+      <div class="toolbar" role="search">
+        <label class="search">
+          <span class="sr-only">Rechercher un produit</span>
+          <svg aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="f-q" type="search" placeholder="Rechercher un produit…" autocomplete="off">
+        </label>
+        <label class="select">
+          <span class="sr-only">Espace</span>
+          <select id="f-space"></select>
+        </label>
+        <label class="select">
+          <span class="sr-only">Péremption</span>
+          <select id="f-expiry">
+            <option value="">Toutes les dates</option>
+            <option value="expired">Périmés</option>
+            <option value="soon">Bientôt périmés</option>
+            <option value="alert">Périmés ou bientôt</option>
+            <option value="openlong">Ouverts depuis longtemps</option>
+            <option value="dated">Avec date de péremption</option>
+            <option value="undated">Sans date de péremption</option>
+          </select>
+        </label>
+        <label class="select">
+          <span class="sr-only">Trier par</span>
+          <select id="f-sort">
+            <option value="expiry">Tri : péremption proche</option>
+            <option value="name">Tri : nom (A → Z)</option>
+            <option value="space">Tri : espace</option>
+            <option value="opened">Tri : ouverture la plus ancienne</option>
+            <option value="recent">Tri : ajout récent</option>
+          </select>
+        </label>
+      </div>
+      <p id="filter-info" class="filter-info" hidden></p>
+
+      <ul id="list" class="list" aria-live="polite"></ul>
+      <div id="empty" class="empty" hidden></div>
+
+      <!-- Version imprimable (masquée à l'écran) -->
+      <div id="print" class="print-only" aria-hidden="true"></div>
+    </section>
+
+    <!-- Paramètres -->
+    <section id="view-settings" hidden>
+      <div class="view-head"><h1>Paramètres</h1></div>
+
+      <div class="panel">
+        <h2>Espaces de rangement</h2>
+        <p class="hint">Les espaces apparaissent dans cet ordre dans le formulaire d’ajout.</p>
+        <ul id="spaces" class="spaces"></ul>
+        <form id="space-add" class="inline-form">
+          <label class="field grow">
+            <span class="sr-only">Nom du nouvel espace</span>
+            <input name="name" type="text" maxlength="40" placeholder="Nouvel espace (ex. Cellier)" required>
+          </label>
+          <button class="btn btn-primary" type="submit"><svg aria-hidden="true"><use href="#i-plus"/></svg> Ajouter</button>
+        </form>
+      </div>
+
+      <form id="notif-form" class="panel" novalidate>
+        <h2>Notifications Discord</h2>
+        <p class="hint">Recevez chaque jour (ou chaque semaine) un récapitulatif des produits à surveiller dans un salon Discord.
+          Dans Discord : <em>Paramètres du salon → Intégrations → Webhooks → Nouveau webhook → Copier l’URL</em>.</p>
+
+        <div id="webhook-status" class="webhook-status"></div>
+        <label class="field">
+          <span>URL du webhook</span>
+          <input name="webhook_url" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="https://discord.com/api/webhooks/…">
+          <small id="webhook-help">L’URL est conservée uniquement sur le serveur et n’est jamais réaffichée.</small>
+        </label>
+        <div class="row-actions">
+          <button type="button" class="btn" data-action="test-webhook">Tester le webhook</button>
+          <button type="button" class="btn btn-ghost danger-text" data-action="clear-webhook" hidden>Retirer le webhook</button>
+        </div>
+
+        <fieldset>
+          <legend>Alertes</legend>
+          <label class="check"><input type="checkbox" name="alert_expiring"> <span>Produits bientôt périmés, à partir de
+            <input class="num" name="expiry_days" type="number" min="0" max="365" inputmode="numeric" aria-label="Nombre de jours avant péremption"> jour(s) avant la date</span></label>
+          <label class="check"><input type="checkbox" name="alert_expired"> <span>Produits périmés</span></label>
+          <label class="check"><input type="checkbox" name="alert_open"> <span>Produits ouverts depuis au moins
+            <input class="num" name="open_days" type="number" min="1" max="365" inputmode="numeric" aria-label="Nombre de jours après ouverture"> jour(s)</span></label>
+          <small>Ces seuils servent aussi aux indicateurs de l’application. Un produit sans date de péremption ou sans date d’ouverture ne déclenche pas l’alerte correspondante.</small>
+        </fieldset>
+
+        <fieldset>
+          <legend>Envoi</legend>
+          <div class="grid-3">
+            <label class="field"><span>Fréquence</span>
+              <select name="frequency">
+                <option value="daily">Tous les jours</option>
+                <option value="weekly">Une fois par semaine</option>
+              </select>
+            </label>
+            <label class="field" id="weekday-field"><span>Jour</span>
+              <select name="weekday">
+                <option value="1">Lundi</option><option value="2">Mardi</option><option value="3">Mercredi</option>
+                <option value="4">Jeudi</option><option value="5">Vendredi</option><option value="6">Samedi</option>
+                <option value="7">Dimanche</option>
+              </select>
+            </label>
+            <label class="field"><span>Heure</span><input name="time" type="time" required></label>
+          </div>
+          <label class="field"><span>Fuseau horaire</span><select name="timezone"></select></label>
+          <label class="check"><input type="checkbox" name="skip_unchanged">
+            <span>Ne pas renvoyer un récapitulatif identique au précédent</span></label>
+          <small>Au plus un message par jour (ou par semaine), regroupant tous les produits concernés. Aucun message n’est envoyé s’il n’y a rien à signaler.</small>
+        </fieldset>
+
+        <p id="digest-status" class="digest-status"></p>
+        <div class="row-actions">
+          <button type="submit" class="btn btn-primary">Enregistrer</button>
+          <button type="button" class="btn" data-action="send-now">Envoyer le récapitulatif maintenant</button>
+        </div>
+      </form>
+
+      <div class="panel" id="data-panel">
+        <h2>Données</h2>
+        <p class="hint">Les données sont enregistrées sur le serveur (fichier SQLite). Consultez le README pour la sauvegarde.</p>
+        <button type="button" class="btn" data-action="demo">Charger des exemples</button>
+      </div>
+    </section>
+  </main>
+
+  <button type="button" class="fab" data-action="add" aria-label="Ajouter un produit">
+    <svg aria-hidden="true"><use href="#i-plus"/></svg>
+  </button>
+
+  <!-- Formulaire produit -->
+  <dialog id="product-dialog" aria-labelledby="pd-title">
+    <form id="product-form" method="dialog" novalidate>
+      <header class="dialog-head">
+        <h2 id="pd-title">Ajouter un produit</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Fermer"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </header>
+      <div class="dialog-body">
+        <div class="field combo">
+          <label for="pf-name">Produit</label>
+          <input id="pf-name" name="name" type="text" maxlength="80" required autocomplete="off"
+                 role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pf-suggest"
+                 placeholder="Pâtes, riz, lait…">
+          <ul id="pf-suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></ul>
+        </div>
+
+        <fieldset class="field">
+          <legend>Espace</legend>
+          <div id="pf-spaces" class="chips"></div>
+        </fieldset>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="pf-qty">Quantité</label>
+            <div class="stepper">
+              <button type="button" class="icon-btn" data-step="-1" aria-label="Diminuer la quantité">−</button>
+              <input id="pf-qty" name="quantity" type="text" inputmode="decimal" required>
+              <button type="button" class="icon-btn" data-step="1" aria-label="Augmenter la quantité">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="pf-unit">Unité</label>
+            <select id="pf-unit" name="unit"></select>
+          </div>
+        </div>
+
+        <fieldset class="field">
+          <legend>État</legend>
+          <div class="segmented">
+            <label><input type="radio" name="state" value="closed" checked><span>Fermé</span></label>
+            <label><input type="radio" name="state" value="open"><span>Ouvert</span></label>
+          </div>
+        </fieldset>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="pf-exp">Péremption <small>(facultatif)</small></label>
+            <input id="pf-exp" name="expires_on" type="date">
+          </div>
+          <div class="field" id="pf-opened-field">
+            <label for="pf-opened">Ouvert le <small>(facultatif)</small></label>
+            <input id="pf-opened" name="opened_on" type="date">
+          </div>
+        </div>
+        <p class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn btn-ghost" data-close>Annuler</button>
+        <button type="submit" class="btn" value="again" id="pf-again">Enregistrer et ajouter un autre</button>
+        <button type="submit" class="btn btn-primary" value="save">Enregistrer</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Ouvrir une partie du stock -->
+  <dialog id="open-dialog" aria-labelledby="od-title">
+    <form id="open-form" method="dialog" novalidate>
+      <header class="dialog-head">
+        <h2 id="od-title">Ouvrir</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Fermer"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </header>
+      <div class="dialog-body">
+        <p id="od-text"></p>
+        <div class="grid-2">
+          <div class="field">
+            <label for="of-qty">Quantité à ouvrir</label>
+            <div class="stepper">
+              <button type="button" class="icon-btn" data-step="-1" aria-label="Diminuer">−</button>
+              <input id="of-qty" name="quantity" type="text" inputmode="decimal" required>
+              <button type="button" class="icon-btn" data-step="1" aria-label="Augmenter">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="of-date">Ouvert le <small>(facultatif)</small></label>
+            <input id="of-date" name="opened_on" type="date">
+          </div>
+        </div>
+        <p class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn btn-ghost" data-close>Annuler</button>
+        <button type="submit" class="btn btn-primary">Ouvrir</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Confirmation générique -->
+  <dialog id="confirm-dialog" aria-labelledby="cd-title">
+    <form method="dialog">
+      <header class="dialog-head"><h2 id="cd-title">Confirmer</h2></header>
+      <div class="dialog-body" id="cd-body"></div>
+      <footer class="dialog-foot">
+        <button type="submit" class="btn btn-ghost" value="cancel">Annuler</button>
+        <button type="submit" class="btn btn-danger" value="ok" id="cd-ok">Supprimer</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Icônes -->
+  <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-open" viewBox="0 0 24 24"><path d="M4 8h16l-1.5 11a2 2 0 0 1-2 1.7H7.5a2 2 0 0 1-2-1.7zM6 8l3-4h6M12 4l6 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-print" viewBox="0 0 24 24"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+</body>
+</html>
