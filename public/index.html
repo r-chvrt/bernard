@@ -9,8 +9,7 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="app.css">
-  <script src="dictionary.js" defer></script>
-  <script src="app.js" defer></script>
+  <script type="module" src="app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Aller au contenu</a>
@@ -47,43 +46,41 @@
 
       <div id="summary" class="summary" aria-label="Résumé"></div>
 
-      <div class="toolbar" role="search">
-        <label class="search">
-          <span class="sr-only">Rechercher un produit</span>
-          <svg aria-hidden="true"><use href="#i-search"/></svg>
-          <input id="f-q" type="search" placeholder="Rechercher un produit…" autocomplete="off">
-        </label>
-        <label class="select">
-          <span class="sr-only">Espace</span>
-          <select id="f-space"></select>
-        </label>
-        <label class="select">
-          <span class="sr-only">Péremption</span>
-          <select id="f-expiry">
-            <option value="">Toutes les dates</option>
-            <option value="expired">Périmés</option>
-            <option value="soon">Bientôt périmés</option>
-            <option value="alert">Périmés ou bientôt</option>
-            <option value="openlong">Ouverts depuis longtemps</option>
-            <option value="dated">Avec date de péremption</option>
-            <option value="undated">Sans date de péremption</option>
-          </select>
-        </label>
-        <label class="select">
-          <span class="sr-only">Trier par</span>
-          <select id="f-sort">
-            <option value="expiry">Tri : péremption proche</option>
-            <option value="name">Tri : nom (A → Z)</option>
-            <option value="space">Tri : espace</option>
-            <option value="opened">Tri : ouverture la plus ancienne</option>
-            <option value="recent">Tri : ajout récent</option>
-          </select>
-        </label>
-      </div>
-      <p id="filter-info" class="filter-info" hidden></p>
+      <div class="layout">
+        <aside id="sidebar" class="sidebar" aria-label="Filtres">
+          <div class="sidebar-head">
+            <h2>Filtres</h2>
+            <button type="button" class="icon-btn sidebar-close" data-action="close-filters" aria-label="Fermer les filtres"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <div id="sidebar-body"></div>
+          <div class="sidebar-foot">
+            <button type="button" class="btn btn-primary sidebar-done" data-action="close-filters">Voir les produits</button>
+          </div>
+        </aside>
+        <div class="sidebar-backdrop" data-action="close-filters" hidden></div>
 
-      <ul id="list" class="list" aria-live="polite"></ul>
-      <div id="empty" class="empty" hidden></div>
+        <div class="content">
+          <div class="toolbar" role="search">
+            <label class="search">
+              <span class="sr-only">Rechercher un produit</span>
+              <svg aria-hidden="true"><use href="#i-search"/></svg>
+              <input id="f-q" type="search" placeholder="Rechercher un produit…" autocomplete="off">
+            </label>
+            <button type="button" class="pill-btn filters-btn" data-action="open-filters" aria-controls="sidebar" aria-expanded="false">
+              <svg aria-hidden="true"><use href="#i-filter"/></svg> Filtres <span id="filters-count" class="count-badge" hidden></span>
+            </button>
+            <div class="menu-wrap">
+              <button type="button" id="sort-btn" class="pill-btn" aria-haspopup="menu" aria-expanded="false">
+                <svg aria-hidden="true"><use href="#i-sort"/></svg><span id="sort-label">Péremption proche</span><svg class="chev" aria-hidden="true"><use href="#i-down"/></svg>
+              </button>
+            </div>
+          </div>
+          <p id="filter-info" class="filter-info" hidden></p>
+
+          <ul id="list" class="list" aria-live="polite"></ul>
+          <div id="empty" class="empty" hidden></div>
+        </div>
+      </div>
 
       <!-- Version imprimable (masquée à l'écran) -->
       <div id="print" class="print-only" aria-hidden="true"></div>
@@ -164,10 +161,29 @@
         </div>
       </form>
 
-      <div class="panel" id="data-panel">
-        <h2>Données</h2>
-        <p class="hint">Les données sont enregistrées sur le serveur (fichier SQLite). Consultez le README pour la sauvegarde.</p>
-        <button type="button" class="btn" data-action="demo">Charger des exemples</button>
+      <div class="panel admin" id="admin-panel">
+        <h2>Administration</h2>
+        <p class="hint">Les données sont enregistrées sur le serveur (fichier SQLite). L’export produit un fichier JSON
+          réutilisable pour une sauvegarde ou un transfert ; l’URL du webhook n’y figure jamais.</p>
+        <div class="admin-grid">
+          <div class="admin-item">
+            <div><strong>Exporter</strong><small>Télécharger produits, espaces et réglages.</small></div>
+            <a class="btn" href="/api/export" download><svg aria-hidden="true"><use href="#i-download"/></svg> Exporter</a>
+          </div>
+          <div class="admin-item">
+            <div><strong>Importer</strong><small>Restaurer ou ajouter le contenu d’un export.</small></div>
+            <label class="btn file-btn"><svg aria-hidden="true"><use href="#i-upload"/></svg> Importer…
+              <input id="import-file" type="file" accept="application/json,.json" class="sr-only"></label>
+          </div>
+          <div class="admin-item" id="demo-item">
+            <div><strong>Données d’exemple</strong><small>Pour découvrir l’application (stock vide uniquement).</small></div>
+            <button type="button" class="btn" data-action="demo">Charger</button>
+          </div>
+          <div class="admin-item danger-zone">
+            <div><strong>Purger</strong><small>Vider le stock ou réinitialiser l’application.</small></div>
+            <button type="button" class="btn btn-danger-outline" data-action="purge"><svg aria-hidden="true"><use href="#i-trash"/></svg> Purger…</button>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -190,6 +206,11 @@
                  role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pf-suggest"
                  placeholder="Pâtes, riz, lait…">
           <ul id="pf-suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></ul>
+        </div>
+
+        <div class="field">
+          <label for="pf-cat">Catégorie <small id="pf-cat-hint"></small></label>
+          <select id="pf-cat" name="category"></select>
         </div>
 
         <fieldset class="field">
@@ -218,6 +239,11 @@
             <label><input type="radio" name="state" value="closed" checked><span>Fermé</span></label>
             <label><input type="radio" name="state" value="open"><span>Ouvert</span></label>
           </div>
+        </fieldset>
+
+        <fieldset class="field" id="pf-remaining-field">
+          <legend>Reste dans le produit entamé <small>(facultatif)</small></legend>
+          <div id="pf-remaining" class="levels"></div>
         </fieldset>
 
         <div class="grid-2">
@@ -284,6 +310,48 @@
     </form>
   </dialog>
 
+ <!-- Import -->
+  <dialog id="import-dialog" aria-labelledby="id-title">
+    <form id="import-form" method="dialog">
+      <header class="dialog-head"><h2 id="id-title">Importer un export</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Fermer"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+      <div class="dialog-body">
+        <p id="import-summary"></p>
+        <label class="option"><input type="radio" name="mode" value="merge" checked>
+          <span><strong>Ajouter au stock actuel</strong><small>Les produits du fichier s’ajoutent ; les espaces manquants sont créés.</small></span></label>
+        <label class="option"><input type="radio" name="mode" value="replace">
+          <span><strong>Remplacer tout</strong><small>Produits, espaces, historique et réglages actuels sont remplacés par ceux du fichier (le webhook est conservé).</small></span></label>
+        <p class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn btn-ghost" data-close>Annuler</button>
+        <button type="submit" class="btn btn-primary">Importer</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Purge -->
+  <dialog id="purge-dialog" aria-labelledby="pg-title">
+    <form id="purge-form" method="dialog" novalidate>
+      <header class="dialog-head"><h2 id="pg-title">Purger les données</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Fermer"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+      <div class="dialog-body">
+        <label class="option"><input type="radio" name="scope" value="products" checked>
+          <span><strong>Vider le stock</strong><small id="pg-products"></small></span></label>
+        <label class="option"><input type="radio" name="scope" value="all">
+          <span><strong>Tout réinitialiser</strong><small>Produits, espaces, historique de saisie et réglages, y compris le webhook Discord. Les espaces Placard, Frigo et Congélateur sont recréés.</small></span></label>
+        <p class="warn-box">Cette action est définitive. Pensez à <a href="/api/export" download>exporter vos données</a> avant.</p>
+        <label class="field"><span>Pour confirmer, tapez <strong>PURGER</strong></span>
+          <input name="confirm" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+        <p class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn btn-ghost" data-close>Annuler</button>
+        <button type="submit" class="btn btn-danger" disabled>Purger définitivement</button>
+      </footer>
+    </form>
+  </dialog>
+
   <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
   <!-- Icônes -->
@@ -300,6 +368,11 @@
     <symbol id="i-print" viewBox="0 0 24 24"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>

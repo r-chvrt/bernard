@@ -2,8 +2,9 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import {
   transaction, now, getSettings, setSettings, publicSettings, webhookUrl,
-  listSpaces, listProducts, getProduct, listHistory, rememberName,
+  listSpaces, listProducts, getProduct, listHistory, rememberName, insertProduct,
 } from './db.js';
+import { CATEGORIES, CATEGORY_IDS, REMAINING_LEVELS, guessCategory } from '../public/catalog.js';
 import { UNITS, UNIT_IDS } from './units.js';
 import { isValidDate, isValidTimeZone, localParts } from './dates.js';
 import { isDiscordWebhook, sendWebhook, runDigest, WebhookError } from './alerts.js';
@@ -50,34 +51,44 @@ function cleanProduct(db, body, current = {}) {
     state: p.state,
     expires_on: cleanDate(p.expires_on, 'Date de péremption'),
     opened_on: cleanDate(p.opened_on, "Date d'ouverture"),
+    category: CATEGORY_IDS.has(p.category) ? p.category : guessCategory(p.name),
+    remaining: p.remaining === undefined || p.remaining === null || p.remaining === '' ? null : Number(p.remaining),
   };
+  if (out.remaining !== null && (!Number.isInteger(out.remaining) || out.remaining < 1 || out.remaining > 100)) {
+    throw bad('Le reste doit être un pourcentage entre 1 et 100');
+  }
   if (!db.prepare('SELECT 1 FROM spaces WHERE id = ?').get(out.space_id)) throw bad('Espace de rangement inconnu');
   if (!UNIT_IDS.has(out.unit)) throw bad('Unité inconnue');
   if (out.state !== 'open' && out.state !== 'closed') throw bad("L'état doit être « ouvert » ou « fermé »");
-  if (out.state === 'closed') out.opened_on = null;
+  if (out.state === 'closed') {
+    out.opened_on = null;
+    out.remaining = null;
+  }
   return out;
 }
 
-/** Entrée existante identique (même nom, espace, unité, état et dates) avec laquelle fusionner. */
+/** Entrée existante identique (même nom, espace, unité, état, dates et reste) avec laquelle fusionner. */
 function findTwin(db, p, excludeId = 0) {
   return db
     .prepare(
       `SELECT * FROM products
        WHERE name = ? COLLATE NOCASE AND space_id = ? AND unit = ? AND state = ?
-         AND expires_on IS ? AND opened_on IS ? AND id <> ?
+         AND expires_on IS ? AND opened_on IS ? AND remaining IS ? AND id <> ?
        ORDER BY id LIMIT 1`,
     )
-    .get(p.name, p.space_id, p.unit, p.state, p.expires_on, p.opened_on, excludeId);
+    .get(p.name, p.space_id, p.unit, p.state, p.expires_on, p.opened_on, p.remaining ?? null, excludeId);
 }
 
 /* ---------- Routes ---------- */
 
 const routes = [];
-const route = (method, path, handler) => {
+const route = (method, path, handler, { maxBody = 100_000 } = {}) => {
   const keys = [];
   const re = new RegExp(`^${path.replace(/:(\w+)/g, (_, k) => (keys.push(k), '(\\d+)'))}$`);
-  routes.push({ method, re, keys, handler });
+  routes.push({ method, re, keys, handler, maxBody });
 };
+/** Valeur renvoyée par un gestionnaire qui a déjà écrit la réponse lui-même. */
+const SENT = Symbol('sent');
 
 function state(db) {
   const settings = getSettings(db);
@@ -87,6 +98,8 @@ function state(db) {
     products: listProducts(db),
     history: listHistory(db),
     units: UNITS,
+    categories: CATEGORIES,
+    remaining_levels: REMAINING_LEVELS,
     settings: publicSettings(settings),
     today: localParts(tz).date,
   };
@@ -156,21 +169,14 @@ route('DELETE', '/api/spaces/:id', ({ db, params, query }) => {
 route('POST', '/api/products', ({ db, body }) => {
   const p = cleanProduct(db, body);
   return transaction(db, () => {
-    rememberName(db, p.name, p.unit);
+    rememberName(db, p.name, p.unit, p.category);
     const twin = body.merge === false ? null : findTwin(db, p);
     if (twin) {
       const quantity = cleanQuantity(twin.quantity + p.quantity);
       db.prepare('UPDATE products SET quantity = ?, updated_at = ? WHERE id = ?').run(quantity, now(), twin.id);
       return { id: twin.id, merged: true };
     }
-    const ts = now();
-    const id = db
-      .prepare(
-        `INSERT INTO products (name, space_id, quantity, unit, state, expires_on, opened_on, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(p.name, p.space_id, p.quantity, p.unit, p.state, p.expires_on, p.opened_on, ts, ts).lastInsertRowid;
-    return { id: Number(id), merged: false };
+    return { id: insertProduct(db, p), merged: false };
   });
 });
 
@@ -180,10 +186,13 @@ route('PATCH', '/api/products/:id', ({ db, params, body }) => {
   const p = cleanProduct(db, body, current);
   return transaction(db, () => {
     db.prepare(
-      `UPDATE products SET name = ?, space_id = ?, quantity = ?, unit = ?, state = ?, expires_on = ?, opened_on = ?, updated_at = ?
+      `UPDATE products SET name = ?, space_id = ?, quantity = ?, unit = ?, state = ?, expires_on = ?, opened_on = ?,
+         category = ?, remaining = ?, updated_at = ?
        WHERE id = ?`,
-    ).run(p.name, p.space_id, p.quantity, p.unit, p.state, p.expires_on, p.opened_on, now(), params.id);
-    if (p.name !== current.name || p.unit !== current.unit) rememberName(db, p.name, p.unit);
+    ).run(p.name, p.space_id, p.quantity, p.unit, p.state, p.expires_on, p.opened_on, p.category, p.remaining, now(), params.id);
+    if (p.name !== current.name || p.unit !== current.unit || p.category !== current.category) {
+      rememberName(db, p.name, p.unit, p.category);
+    }
     return { id: params.id };
   });
 });
@@ -208,32 +217,26 @@ route('POST', '/api/products/:id/open', ({ db, params, body }) => {
 
   return transaction(db, () => {
     const ts = now();
-    const target = { ...src, state: 'open', opened_on };
+    // Un produit fraîchement ouvert est plein : pas de niveau de reste indiqué.
+    const target = { ...src, state: 'open', opened_on, remaining: null };
     const twin = findTwin(db, target, src.id);
-    const remaining = Math.round((src.quantity - qty) * 1000) / 1000;
+    const left = Math.round((src.quantity - qty) * 1000) / 1000;
     let openId;
     if (twin) {
       db.prepare('UPDATE products SET quantity = ?, updated_at = ? WHERE id = ?').run(cleanQuantity(twin.quantity + qty), ts, twin.id);
       openId = twin.id;
-    } else if (remaining <= 0) {
+    } else if (left <= 0) {
       // Tout le stock est ouvert : on transforme l'entrée elle-même.
       db.prepare("UPDATE products SET state = 'open', opened_on = ?, updated_at = ? WHERE id = ?").run(opened_on, ts, src.id);
       return { open_id: src.id, closed_id: null };
     } else {
-      openId = Number(
-        db
-          .prepare(
-            `INSERT INTO products (name, space_id, quantity, unit, state, expires_on, opened_on, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
-          )
-          .run(src.name, src.space_id, qty, src.unit, src.expires_on, opened_on, ts, ts).lastInsertRowid,
-      );
+      openId = insertProduct(db, { ...target, quantity: qty, created_at: undefined }, ts);
     }
-    if (remaining <= 0) {
+    if (left <= 0) {
       db.prepare('DELETE FROM products WHERE id = ?').run(src.id);
       return { open_id: openId, closed_id: null };
     }
-    db.prepare('UPDATE products SET quantity = ?, updated_at = ? WHERE id = ?').run(remaining, ts, src.id);
+    db.prepare('UPDATE products SET quantity = ?, updated_at = ? WHERE id = ?').run(left, ts, src.id);
     return { open_id: openId, closed_id: src.id };
   });
 });
@@ -244,6 +247,106 @@ route('POST', '/api/demo', ({ db }) => {
   const settings = getSettings(db);
   const tz = isValidTimeZone(settings.timezone) ? settings.timezone : 'UTC';
   return { inserted: loadDemo(db, localParts(tz).date) };
+});
+
+
+/* Administration : export, import, purge */
+
+const EXPORT_FORMAT = 'bernard-export';
+const EXPORTABLE_SETTINGS = ['alert_expiring', 'alert_expired', 'alert_open', 'expiry_days', 'open_days',
+  'frequency', 'weekday', 'time', 'timezone', 'skip_unchanged'];
+
+route('GET', '/api/export', ({ db, res }) => {
+  const spaces = listSpaces(db);
+  const spaceName = new Map(spaces.map((s) => [s.id, s.name]));
+  const settings = getSettings(db);
+  const data = {
+    format: EXPORT_FORMAT,
+    version: 1,
+    exported_at: now(),
+    spaces: spaces.map((s) => ({ name: s.name })),
+    products: listProducts(db).map((p) => ({
+      name: p.name, space: spaceName.get(p.space_id), category: p.category, quantity: p.quantity, unit: p.unit,
+      state: p.state, remaining: p.remaining, expires_on: p.expires_on, opened_on: p.opened_on, created_at: p.created_at,
+    })),
+    history: listHistory(db),
+    // L'URL du webhook n'est jamais exportée.
+    settings: Object.fromEntries(EXPORTABLE_SETTINGS.map((k) => [k, settings[k]])),
+  };
+  const day = new Date().toISOString().slice(0, 10);
+  send(res, 200, JSON.stringify(data, null, 2), {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': `attachment; filename="bernard-export-${day}.json"`,
+    'Cache-Control': 'no-store',
+  });
+  return SENT;
+});
+
+route('POST', '/api/import', ({ db, body }) => {
+  const { data, mode } = body;
+  if (mode !== 'replace' && mode !== 'merge') throw bad('Mode d’import invalide');
+  if (!data || data.format !== EXPORT_FORMAT || !Array.isArray(data.products)) {
+    throw bad('Ce fichier n’est pas un export de Bernard');
+  }
+  if (data.products.length > 20000) throw bad('Fichier trop volumineux');
+
+  return transaction(db, () => {
+    if (mode === 'replace') db.exec('DELETE FROM products; DELETE FROM name_history; DELETE FROM spaces;');
+    const spaceIds = new Map(listSpaces(db).map((s) => [s.name.toLowerCase(), s.id]));
+    let createdSpaces = 0;
+    const ensureSpace = (rawName) => {
+      const name = cleanName(rawName || 'Sans espace', 40);
+      const key = name.toLowerCase();
+      if (!spaceIds.has(key)) {
+        const { pos } = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM spaces').get();
+        spaceIds.set(key, Number(db.prepare('INSERT INTO spaces (name, position) VALUES (?, ?)').run(name, pos).lastInsertRowid));
+        createdSpaces++;
+      }
+      return spaceIds.get(key);
+    };
+    for (const s of Array.isArray(data.spaces) ? data.spaces : []) ensureSpace(s?.name);
+
+    const ts = now();
+    data.products.forEach((raw, i) => {
+      try {
+        if (!raw || typeof raw !== 'object') throw bad('entrée invalide');
+        const p = cleanProduct(db, { ...raw, space_id: ensureSpace(raw.space) });
+        const created = typeof raw.created_at === 'string' && !Number.isNaN(Date.parse(raw.created_at)) ? raw.created_at : ts;
+        insertProduct(db, { ...p, created_at: created }, ts);
+      } catch (err) {
+        throw bad(`Produit n° ${i + 1} (${String(raw?.name ?? '?').slice(0, 40)}) : ${err.message}`);
+      }
+    });
+    for (const h of Array.isArray(data.history) ? data.history : []) {
+      if (typeof h?.name === 'string' && h.name.trim() && UNIT_IDS.has(h.unit)) {
+        rememberName(db, cleanName(h.name), h.unit, CATEGORY_IDS.has(h.category) ? h.category : null);
+      }
+    }
+    if (mode === 'replace' && data.settings && typeof data.settings === 'object') {
+      // Chaque réglage valide est repris ; les valeurs invalides sont ignorées.
+      for (const k of EXPORTABLE_SETTINGS) {
+        if (data.settings[k] === undefined) continue;
+        try {
+          setSettings(db, cleanSettings({ [k]: data.settings[k] }));
+        } catch { /* ignoré */ }
+      }
+    }
+    return { products: data.products.length, spaces_created: createdSpaces };
+  });
+}, { maxBody: 10_000_000 });
+
+route('POST', '/api/purge', ({ db, body }) => {
+  if (body.confirm !== 'PURGER') throw bad('Tapez PURGER pour confirmer');
+  if (body.scope !== 'products' && body.scope !== 'all') throw bad('Type de purge invalide');
+  return transaction(db, () => {
+    const { n } = db.prepare('SELECT COUNT(*) AS n FROM products').get();
+    db.exec('DELETE FROM products');
+    if (body.scope === 'all') {
+      db.exec(`DELETE FROM name_history; DELETE FROM spaces; DELETE FROM settings;
+        INSERT INTO spaces (name, position) VALUES ('Placard', 0), ('Frigo', 1), ('Congélateur', 2);`);
+    }
+    return { deleted: n };
+  });
 });
 
 /* Paramètres & notifications */
@@ -332,12 +435,12 @@ function send(res, status, body, headers = {}) {
 const sendJson = (res, status, data) =>
   send(res, status, JSON.stringify(data), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
 
-async function readBody(req) {
+async function readBody(req, maxBody) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 100_000) throw new HttpError(413, 'Requête trop volumineuse');
+    if (size > maxBody) throw new HttpError(413, 'Requête trop volumineuse');
     chunks.push(chunk);
   }
   if (!size) return {};
@@ -383,9 +486,10 @@ export function createApp({ db, publicDir, log = console }) {
         const m = r.method === req.method && url.pathname.match(r.re);
         if (!m) continue;
         const params = Object.fromEntries(r.keys.map((k, i) => [k, Number(m[i + 1])]));
-        const body = mutating ? await readBody(req) : {};
-        const result = await r.handler({ db, params, body, query: url.searchParams });
-        return sendJson(res, 200, result);
+        const body = mutating ? await readBody(req, r.maxBody) : {};
+        const result = await r.handler({ db, params, body, query: url.searchParams, res });
+        if (result !== SENT) sendJson(res, 200, result);
+        return;
       }
       throw notFound('Route inconnue');
     } catch (err) {

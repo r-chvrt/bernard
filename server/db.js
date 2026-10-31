@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { guessCategory } from '../public/catalog.js';
 
 const MIGRATIONS = [
   `
@@ -32,7 +33,21 @@ const MIGRATIONS = [
   );
   INSERT INTO spaces (name, position) VALUES ('Placard', 0), ('Frigo', 1), ('Congélateur', 2);
   `,
+  // v2 : catégories et niveau restant des produits entamés
+  `
+  ALTER TABLE products ADD COLUMN category TEXT NOT NULL DEFAULT 'autre';
+  ALTER TABLE products ADD COLUMN remaining INTEGER CHECK (remaining IS NULL OR (remaining > 0 AND remaining <= 100));
+  ALTER TABLE name_history ADD COLUMN category TEXT;
+  `,
 ];
+
+// Traitements JavaScript associés à une migration (exécutés juste après elle).
+const POST_MIGRATION = {
+  2(db) {
+    const upd = db.prepare('UPDATE products SET category = ? WHERE id = ?');
+    for (const { id, name } of db.prepare('SELECT id, name FROM products').all()) upd.run(guessCategory(name), id);
+  },
+};
 
 export function openDb(file) {
   const db = new DatabaseSync(file);
@@ -42,6 +57,7 @@ export function openDb(file) {
   for (let v = version; v < MIGRATIONS.length; v++) {
     transaction(db, () => {
       db.exec(MIGRATIONS[v]);
+      POST_MIGRATION[v + 1]?.(db);
       db.exec(`PRAGMA user_version = ${v + 1}`);
     });
   }
@@ -143,14 +159,26 @@ export function getProduct(db, id) {
 
 export function listHistory(db) {
   return db
-    .prepare('SELECT name, unit FROM name_history ORDER BY used_at DESC LIMIT 500')
+    .prepare('SELECT name, unit, category FROM name_history ORDER BY used_at DESC LIMIT 500')
     .all()
     .map((r) => ({ ...r }));
 }
 
-export function rememberName(db, name, unit) {
+export function rememberName(db, name, unit, category = null) {
   db.prepare(
-    `INSERT INTO name_history (name, unit, used_at) VALUES (?, ?, ?)
-     ON CONFLICT(name) DO UPDATE SET unit = excluded.unit, used_at = excluded.used_at`,
-  ).run(name, unit, now());
+    `INSERT INTO name_history (name, unit, category, used_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET unit = excluded.unit, category = excluded.category, used_at = excluded.used_at`,
+  ).run(name, unit, category, now());
+}
+
+export function insertProduct(db, p, ts = now()) {
+  return Number(
+    db
+      .prepare(
+        `INSERT INTO products (name, space_id, quantity, unit, state, expires_on, opened_on, category, remaining, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(p.name, p.space_id, p.quantity, p.unit, p.state, p.expires_on ?? null, p.opened_on ?? null,
+        p.category, p.remaining ?? null, p.created_at ?? ts, ts).lastInsertRowid,
+  );
 }

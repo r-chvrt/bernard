@@ -5,7 +5,10 @@ Bernard est une petite application web auto-hébergée pour savoir **ce que l’
 - Interface en français, adaptée à l’ordinateur, à la tablette et au smartphone (thème clair/sombre automatique).
 - Espaces de rangement personnalisables (placard, frigo, congélateur…).
 - Ouverture partielle en un geste : « Ouvrir 1 paquet » retire un paquet du stock fermé et l’ajoute aux produits ouverts.
-- Trois vues (Tout, Ouverts, Fermés) avec résumé, recherche, filtres, tri et version imprimable A4.
+- Niveau restant des produits entamés (plein, ¾, ½, ¼, presque vide) réglable d’un clic.
+- Catégories déduites automatiquement du nom et affichées sous forme d’icône.
+- Trois vues (Tout, Ouverts, Fermés) avec résumé, recherche, filtres en barre latérale (espace, catégorie, date), tri et version imprimable A4.
+- Export, import et purge des données depuis les paramètres.
 - Récapitulatif Discord quotidien ou hebdomadaire, envoyé par le serveur, même navigateur fermé.
 
 ---
@@ -35,7 +38,8 @@ server/
   backup.js    sauvegarde à chaud de la base
 public/
   index.html, app.css, app.js   interface
-  dictionary.js                 ~150 produits génériques pour l’autocomplétion
+  catalog.js                    catégories, ~200 produits génériques, déduction de catégorie
+                                (module partagé par le navigateur et le serveur)
 test/          tests automatisés (node --test)
 ```
 
@@ -144,6 +148,7 @@ docker compose start
 ### Ajouter un produit
 Bouton **Ajouter un produit** (ou le bouton **+** sur mobile, ou la touche **N**).
 1. Tapez le nom : des suggestions apparaissent (produits génériques et noms déjà utilisés). Choisir une suggestion règle aussi l’unité. La saisie reste libre.
+   La **catégorie** est proposée automatiquement d’après le nom (« Penne rigate » → Pâtes, riz & féculents) ; vous pouvez la changer, et votre choix est retenu pour la prochaine saisie du même nom.
 2. Choisissez l’espace (le dernier utilisé est présélectionné), la quantité et l’état.
 3. Date de péremption et date d’ouverture sont facultatives.
 
@@ -154,23 +159,33 @@ Si une entrée identique existe déjà (même nom, espace, unité, état et date
 - **− / +** : ajuste la quantité (pas adapté à l’unité : 1 paquet, 0,5 kg, 100 g…). À zéro, l’entrée est retirée et un bouton **Annuler** permet de revenir en arrière.
 - Cliquer sur la quantité ouvre la fiche pour saisir une valeur exacte.
 - **Ouvrir** (produits fermés) : choisissez combien ouvrir ; la date du jour est proposée (modifiable ou effaçable). Le stock fermé diminue et l’entrée ouverte est créée ou complétée.
+- **Reste** (produits ouverts) : cliquez sur la petite jauge pour indiquer ce qu’il reste dans le produit entamé — Plein, ¾, ½, ¼ ou Presque vide (orange à partir de ¼). Le niveau apparaît aussi à l’impression et dans les messages Discord. « Reste ? » signifie qu’il n’a pas été indiqué.
 - **Crayon** : modifier la fiche, déplacer vers un autre espace, changer l’état.
 - **Corbeille** : suppression après confirmation.
 
 ### Vues, filtres et indicateurs
 - **Tout / Ouverts / Fermés**, avec un résumé : entrées affichées, ouverts/fermés, bientôt périmés, périmés, ouverts depuis longtemps. Cliquer sur une carte du résumé filtre la liste.
-- Recherche par nom (insensible aux accents), filtre par espace, filtre par date, tri.
+- **Barre latérale de filtres** (à gauche ; bouton **Filtres** sur mobile) : espace, catégorie et date de péremption, avec le nombre de produits pour chaque choix. Exemple : vue **Ouverts** + catégorie **Pâtes, riz & féculents** = tous les paquets de pâtes, riz, couscous… entamés.
+- Chaque produit est précédé de l’icône de sa catégorie (🍝 féculents, 🥫 conserves, 🧀 laitiers, 🧊 surgelés…), avec son nom au survol.
+- Recherche par nom (insensible aux accents) et menu de tri (péremption, nom, catégorie, espace, ouverture, ajout récent).
 - Indicateurs : bordure et badge **orange « Périme dans n j »**, **rouge « Périmé »**, badge **« Ouvert depuis n j »** au-delà du seuil. Les seuils se règlent dans Paramètres.
 - Les quantités d’unités différentes ne sont jamais additionnées.
 
 ### Impression
-**Imprimer** produit une liste A4 en noir et blanc de la vue actuelle avec ses filtres et son tri (avec le tri « espace », les produits sont regroupés par espace). Chaque ligne a une case à cocher, les dates proches sont marquées **⚠ J-n** et les produits périmés **PÉRIMÉ**.
+**Imprimer** produit une liste A4 en noir et blanc de la vue actuelle avec ses filtres et son tri (avec le tri « espace » ou « catégorie », les produits sont regroupés). Chaque ligne a une case à cocher, les dates proches sont marquées **⚠ J-n** et les produits périmés **PÉRIMÉ**.
 
 ### Espaces de rangement
 Dans **Paramètres** : ajouter, renommer, réordonner (flèches) ou supprimer. Si l’espace contient des produits, l’application propose de les **déplacer** vers un autre espace ou de **confirmer leur suppression**.
 
+### Administration (Paramètres)
+- **Exporter** télécharge un fichier JSON lisible (produits, espaces, historique de saisie, réglages). L’URL du webhook n’y figure jamais.
+- **Importer…** lit un export puis propose : **Ajouter au stock actuel** (les espaces manquants sont créés) ou **Remplacer tout** (produits, espaces, historique et réglages ; le webhook en place est conservé). Le fichier est vérifié entièrement avant tout changement : en cas d’erreur, rien n’est modifié et le produit fautif est indiqué.
+- **Purger…** propose **Vider le stock** (espaces, réglages et suggestions conservés) ou **Tout réinitialiser** (y compris le webhook). Il faut taper `PURGER` pour confirmer.
+
+L’export JSON complète la sauvegarde du fichier SQLite décrite plus haut : il est pratique pour transférer le stock vers une autre installation.
+
 ### Données d’exemple
-Sur l’écran d’accueil vide, **Charger des exemples** ajoute 16 produits (dates calculées par rapport à aujourd’hui) pour découvrir l’interface. En ligne de commande :
+Sur l’écran d’accueil vide, **Charger des exemples** ajoute 18 produits (dates calculées par rapport à aujourd’hui) pour découvrir l’interface. En ligne de commande :
 
 ```bash
 docker compose exec bernard node --disable-warning=ExperimentalWarning server/seed.js
@@ -206,7 +221,7 @@ docker compose exec bernard node --disable-warning=ExperimentalWarning server/se
 npm test
 ```
 
-15 tests couvrent : champs obligatoires et validation, unité par défaut, fusion des entrées identiques, **ouverture partielle** (diminution du stock fermé, création puis mise à jour de l’entrée ouverte, conservation de la date de péremption, disparition de l’entrée fermée à zéro), déplacement et changement d’état, suppression d’un espace non vide (refus, déplacement, suppression), règles des **alertes** (seuils, produits sans date, alertes désactivées), contenu du message Discord, **un seul envoi par période**, option « message identique », **non-divulgation du webhook** (API et messages d’erreur), protection CSRF et en-têtes de sécurité.
+20 tests couvrent : champs obligatoires et validation, unité par défaut, fusion des entrées identiques, **ouverture partielle** (diminution du stock fermé, création puis mise à jour de l’entrée ouverte, conservation de la date de péremption, disparition de l’entrée fermée à zéro), déplacement et changement d’état, suppression d’un espace non vide (refus, déplacement, suppression), règles des **alertes** (seuils, produits sans date, alertes désactivées), contenu du message Discord, **un seul envoi par période**, option « message identique », **non-divulgation du webhook** (API et messages d’erreur), protection CSRF et en-têtes de sécurité, **catégories** (déduction depuis un nom libre, modification), **niveau restant**, **export / import** (remplacement, fusion, fichier invalide sans effet), **purge** avec confirmation et migration d’une base existante.
 
 ### Vérification manuelle (5 minutes)
 
@@ -218,8 +233,10 @@ npm test
 6. **Impression** : filtrez sur un espace, cliquez sur **Imprimer** → aperçu A4 sans boutons ni menus, avec le titre de la vue et le filtre actif.
 7. **Espaces** : supprimez un espace qui contient des produits → choix entre déplacer et supprimer.
 8. **Discord** : collez l’URL du webhook, **Tester le webhook**, puis **Envoyer le récapitulatif maintenant** → le salon reçoit le récapitulatif. Rechargez la page : l’URL n’est plus affichée, seul « Webhook configuré » apparaît.
-9. **Persistance** : `docker compose restart` → les produits et paramètres sont toujours là.
-10. **Mobile** : sur un téléphone, la navigation est en bas de l’écran et le bouton **+** ouvre le formulaire en panneau.
+9. **Catégories et reste** : vue **Ouverts**, cliquez sur « Pâtes, riz & féculents » dans les filtres → seuls les féculents entamés restent. Cliquez sur la jauge d’un produit et choisissez ½ → « Reste ½ ».
+10. **Administration** : **Exporter**, puis **Purger… → Vider le stock** (taper PURGER), puis **Importer…** le fichier → le stock revient à l’identique.
+11. **Persistance** : `docker compose restart` → les produits et paramètres sont toujours là.
+12. **Mobile** : sur un téléphone, la navigation est en bas de l’écran, le bouton **Filtres** ouvre le panneau latéral et le bouton **+** ouvre le formulaire en panneau.
 
 ---
 
@@ -232,6 +249,9 @@ npm test
 | POST | `/api/products/:id/open` | Ouvrir une partie d’un stock fermé `{quantity, opened_on}` |
 | POST / PATCH / DELETE | `/api/spaces[/:id]` | Gérer les espaces (`?products=move&target=ID` ou `?products=delete`) |
 | PUT | `/api/settings` | Paramètres et webhook |
+| GET | `/api/export` | Export JSON (sans le webhook) |
+| POST | `/api/import` | Import `{mode: "merge" \| "replace", data}` |
+| POST | `/api/purge` | Purge `{scope: "products" \| "all", confirm: "PURGER"}` |
 | POST | `/api/notifications/test` · `/send` | Tester le webhook · envoyer le récapitulatif |
 | GET | `/api/health` | Contrôle de santé (utilisé par Docker) |
 

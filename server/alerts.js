@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getSettings, setSettings, listProducts, listSpaces, webhookUrl } from './db.js';
 import { daysBetween, formatDateFr, localParts, isValidTimeZone } from './dates.js';
 import { unitLabel } from './units.js';
+import { REMAINING_LEVELS } from '../public/catalog.js';
 
 const DISCORD_WEBHOOK_RE =
   /^https:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/api(?:\/v\d+)?\/webhooks\/\d+\/[\w-]+$/;
@@ -60,7 +61,8 @@ const fmtQty = (q) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 
 const plural = (n, one, many) => (n > 1 ? many : one);
 
 function line(product, spaceName, detail) {
-  const qty = `${fmtQty(product.quantity)} ${unitLabel(product.unit, product.quantity)}`;
+  const level = REMAINING_LEVELS.find((l) => l.value === product.remaining);
+  const qty = `${fmtQty(product.quantity)} ${unitLabel(product.unit, product.quantity)}${level ? ` (reste ${level.short})` : ''}`;
   const state = product.state === 'open' ? 'ouvert' : 'fermé';
   return `• **${escapeMd(product.name)}** — ${qty}, ${state} · ${escapeMd(spaceName)} · ${detail}`;
 }
