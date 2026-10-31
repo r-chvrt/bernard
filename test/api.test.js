@@ -165,6 +165,9 @@ test('catégorie déduite du nom, modifiable, et niveau restant', async () => {
 
   assert.equal((await call('PATCH', `/api/products/${id}`, { remaining: 50 })).status, 200);
   assert.equal((await call('PATCH', `/api/products/${id}`, { remaining: 0 })).status, 400);
+  await call('PATCH', `/api/products/${id}`, { remaining: 100 });
+  assert.equal((await state()).products.find((x) => x.id === id).remaining, null, '« plein » n’existe plus');
+  await call('PATCH', `/api/products/${id}`, { remaining: 50 });
   assert.equal((await call('PATCH', `/api/products/${id}`, { category: 'inconnue-xyz', name: 'Truc bizarre' })).status, 200);
   p = (await state()).products.find((x) => x.id === id);
   assert.equal(p.remaining, 50);

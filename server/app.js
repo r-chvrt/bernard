@@ -9,6 +9,9 @@ import { UNITS, UNIT_IDS } from './units.js';
 import { isValidDate, isValidTimeZone, localParts } from './dates.js';
 import { isDiscordWebhook, sendWebhook, runDigest, WebhookError } from './alerts.js';
 import { loadDemo } from './demo.js';
+import {
+  authEnabled, currentSession, startSession, endSession, setPassword, clearPassword, verifyPassword, createLimiter,
+} from './auth.js';
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -57,6 +60,8 @@ function cleanProduct(db, body, current = {}) {
   if (out.remaining !== null && (!Number.isInteger(out.remaining) || out.remaining < 1 || out.remaining > 100)) {
     throw bad('Le reste doit être un pourcentage entre 1 et 100');
   }
+  // Un produit entamé n'est pas « plein » : 100 % (anciens exports) équivaut à « non indiqué ».
+  if (out.remaining === 100) out.remaining = null;
   if (!db.prepare('SELECT 1 FROM spaces WHERE id = ?').get(out.space_id)) throw bad('Espace de rangement inconnu');
   if (!UNIT_IDS.has(out.unit)) throw bad('Unité inconnue');
   if (out.state !== 'open' && out.state !== 'closed') throw bad("L'état doit être « ouvert » ou « fermé »");
@@ -82,10 +87,11 @@ function findTwin(db, p, excludeId = 0) {
 /* ---------- Routes ---------- */
 
 const routes = [];
-const route = (method, path, handler, { maxBody = 100_000 } = {}) => {
+// `open: true` : route accessible sans être connecté quand le mot de passe est activé.
+const route = (method, path, handler, { maxBody = 100_000, open = false } = {}) => {
   const keys = [];
   const re = new RegExp(`^${path.replace(/:(\w+)/g, (_, k) => (keys.push(k), '(\\d+)'))}$`);
-  routes.push({ method, re, keys, handler, maxBody });
+  routes.push({ method, re, keys, handler, maxBody, open });
 };
 /** Valeur renvoyée par un gestionnaire qui a déjà écrit la réponse lui-même. */
 const SENT = Symbol('sent');
@@ -105,7 +111,55 @@ function state(db) {
   };
 }
 
-route('GET', '/api/health', () => ({ ok: true }));
+route('GET', '/api/health', () => ({ ok: true }), { open: true });
+
+/* Connexion (mot de passe unique, facultatif) */
+
+const cleanPassword = (v) => {
+  if (typeof v !== 'string' || v.length < 6) throw bad('Le mot de passe doit contenir au moins 6 caractères');
+  if (v.length > 200) throw bad('Mot de passe trop long');
+  return v;
+};
+
+route('POST', '/api/login', ({ db, body, req, res, limiter }) => {
+  if (!authEnabled(db)) return { ok: true };
+  const ip = req.socket.remoteAddress || '?';
+  const wait = limiter.check(ip);
+  if (wait) throw new HttpError(429, `Trop de tentatives : réessayez dans ${wait} s`);
+  if (!verifyPassword(String(body.password ?? ''), getSettings(db).auth_password)) {
+    limiter.fail(ip);
+    throw new HttpError(401, 'Mot de passe incorrect');
+  }
+  limiter.success(ip);
+  startSession(db, req, res);
+  return { ok: true };
+}, { open: true });
+
+route('POST', '/api/logout', ({ db, req, res }) => {
+  endSession(db, req, res);
+  return { ok: true };
+}, { open: true });
+
+/** Vérifie le mot de passe actuel avant toute modification de la protection. */
+function checkCurrent(db, body) {
+  const stored = getSettings(db).auth_password;
+  if (stored && !verifyPassword(String(body.current_password ?? ''), stored)) throw bad('Mot de passe actuel incorrect');
+}
+
+route('PUT', '/api/auth', ({ db, body, req, res }) => {
+  checkCurrent(db, body);
+  setPassword(db, cleanPassword(body.new_password));
+  // Les autres appareils sont déconnectés ; celui-ci reste connecté.
+  startSession(db, req, res);
+  return { settings: publicSettings(getSettings(db)) };
+});
+
+route('DELETE', '/api/auth', ({ db, body, req, res }) => {
+  checkCurrent(db, body);
+  clearPassword(db);
+  endSession(db, req, res);
+  return { settings: publicSettings(getSettings(db)) };
+});
 route('GET', '/api/state', ({ db }) => state(db));
 
 /* Espaces */
@@ -342,7 +396,7 @@ route('POST', '/api/purge', ({ db, body }) => {
     const { n } = db.prepare('SELECT COUNT(*) AS n FROM products').get();
     db.exec('DELETE FROM products');
     if (body.scope === 'all') {
-      db.exec(`DELETE FROM name_history; DELETE FROM spaces; DELETE FROM settings;
+      db.exec(`DELETE FROM name_history; DELETE FROM spaces; DELETE FROM settings; DELETE FROM sessions;
         INSERT INTO spaces (name, position) VALUES ('Placard', 0), ('Frigo', 1), ('Congélateur', 2);`);
     }
     return { deleted: n };
@@ -453,8 +507,16 @@ async function readBody(req, maxBody) {
 }
 
 export function createApp({ db, publicDir, log = console }) {
-  async function serveStatic(req, res, pathname) {
-    const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
+  const limiter = createLimiter();
+
+  async function serveStatic(req, res, pathname, loggedIn) {
+    let rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
+    // Sans session valide, la page de l'application est remplacée par la page de connexion.
+    // Les autres fichiers statiques ne contiennent aucune donnée : toutes les données passent par l'API.
+    if (rel === 'login.html' && loggedIn) {
+      return send(res, 302, '', { Location: '/' });
+    }
+    if (rel === 'index.html' && !loggedIn) rel = 'login.html';
     const file = normalize(join(publicDir, rel));
     if (!file.startsWith(publicDir + sep)) return send(res, 403, 'Interdit');
     try {
@@ -473,9 +535,10 @@ export function createApp({ db, publicDir, log = console }) {
   return async function handler(req, res) {
     const url = new URL(req.url, 'http://localhost');
     try {
+      const loggedIn = !authEnabled(db) || Boolean(currentSession(db, req));
       if (!url.pathname.startsWith('/api/')) {
         if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée');
-        return await serveStatic(req, res, url.pathname);
+        return await serveStatic(req, res, url.pathname, loggedIn);
       }
       const mutating = req.method !== 'GET' && req.method !== 'HEAD';
       // Exiger du JSON bloque les requêtes inter-sites de formulaires simples (CSRF).
@@ -485,9 +548,12 @@ export function createApp({ db, publicDir, log = console }) {
       for (const r of routes) {
         const m = r.method === req.method && url.pathname.match(r.re);
         if (!m) continue;
+        if (!loggedIn && !r.open) {
+          return sendJson(res, 401, { error: 'Connexion requise', auth_required: true });
+        }
         const params = Object.fromEntries(r.keys.map((k, i) => [k, Number(m[i + 1])]));
         const body = mutating ? await readBody(req, r.maxBody) : {};
-        const result = await r.handler({ db, params, body, query: url.searchParams, res });
+        const result = await r.handler({ db, params, body, query: url.searchParams, req, res, limiter });
         if (result !== SENT) sendJson(res, 200, result);
         return;
       }

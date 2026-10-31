@@ -44,6 +44,11 @@ async function api(method, path, body) {
     body: write ? JSON.stringify(body ?? {}) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.auth_required) {
+    // Session expirée ou mot de passe activé ailleurs : retour à la page de connexion.
+    location.replace('/');
+    throw new Error('Connexion requise');
+  }
   if (!res.ok) {
     const err = new Error(data.error || `Erreur ${res.status}`);
     err.status = res.status;
@@ -137,6 +142,7 @@ function render() {
     if (a.dataset.view === UI.view) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
+  $('#logout-btn').hidden = !S.settings.auth_enabled;
   const settings = UI.view === 'settings';
   $('#view-list').hidden = settings;
   $('#view-settings').hidden = !settings;
@@ -386,6 +392,7 @@ function renderList() {
     : '';
 
   $('#list').innerHTML = shown.map((p) => itemHtml(p, today)).join('');
+  animateNewItems();
   const empty = $('#empty');
   empty.hidden = shown.length > 0;
   if (!shown.length) empty.innerHTML = emptyHtml();
@@ -395,6 +402,24 @@ function renderList() {
   $('.layout').classList.toggle('no-sidebar', noData);
 
   renderPrint(shown, today, parts);
+}
+
+/** Fondu d'apparition pour les cartes qui n'étaient pas affichées au rendu précédent. */
+let shownIds = new Set();
+let lastListKey = '';
+function animateNewItems() {
+  const key = `${UI.view}|${UI.space}|${UI.category}|${UI.expiry}|${UI.sort}`;
+  if (key !== lastListKey) { shownIds = new Set(); lastListKey = key; }
+  let i = 0;
+  const ids = new Set();
+  for (const li of $$('#list > .item')) {
+    ids.add(li.dataset.id);
+    if (!shownIds.has(li.dataset.id)) {
+      li.style.setProperty('--i', Math.min(i++, 12));
+      li.classList.add('enter');
+    }
+  }
+  shownIds = ids;
 }
 
 /* ================= Impression ================= */
@@ -971,7 +996,64 @@ function renderSettings() {
     ? `Dernier traitement : ${new Date(st.last_digest_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })} — ${st.last_digest_status}`
     : 'Aucun récapitulatif envoyé pour le moment.';
   $('#demo-item').hidden = S.products.length > 0;
+  $('#auth-status').textContent = st.auth_enabled
+    ? 'Activé : un mot de passe est demandé à chaque nouvel appareil (session de 30 jours).'
+    : 'Désactivé : l’application est ouverte à tous sur le réseau.';
+  $('#auth-set-btn').lastChild.textContent = st.auth_enabled ? ' Modifier…' : ' Activer…';
+  $('#auth-off-btn').hidden = !st.auth_enabled;
 }
+
+/* ----- Mot de passe d'accès ----- */
+
+const authDialog = $('#auth-dialog');
+const authForm = $('#auth-form');
+let authMode = 'set';
+
+function openAuthDialog(mode) {
+  authMode = mode;
+  const enabled = S.settings.auth_enabled;
+  authForm.reset();
+  setFormError(authForm, '');
+  $('#ad-title').textContent = mode === 'off' ? 'Désactiver le mot de passe' : enabled ? 'Modifier le mot de passe' : 'Protéger l’accès par un mot de passe';
+  $('#ad-intro').textContent = mode === 'off'
+    ? 'L’application redeviendra accessible sans mot de passe à toute personne sur le réseau.'
+    : enabled
+      ? 'Les autres appareils connectés devront saisir le nouveau mot de passe.'
+      : 'Un seul mot de passe, partagé par tout le foyer, sera demandé sur chaque appareil. Cet appareil reste connecté.';
+  $('#ad-current-field').hidden = !enabled;
+  $('#ad-new-field').hidden = mode === 'off';
+  $('#ad-confirm-field').hidden = mode === 'off';
+  $('#ad-submit').textContent = mode === 'off' ? 'Désactiver' : enabled ? 'Modifier' : 'Activer';
+  $('#ad-submit').className = `btn ${mode === 'off' ? 'btn-danger' : 'btn-primary'}`;
+  authDialog.showModal();
+  (enabled ? authForm.elements.current_password : authForm.elements.new_password).focus();
+}
+
+authForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = authForm.elements;
+  if (authMode === 'set') {
+    if (f.new_password.value.length < 6) { setFormError(authForm, 'Le mot de passe doit contenir au moins 6 caractères.'); f.new_password.focus(); return; }
+    if (f.new_password.value !== f.confirm_password.value) { setFormError(authForm, 'Les deux mots de passe ne correspondent pas.'); f.confirm_password.focus(); return; }
+  }
+  const btn = $('#ad-submit');
+  btn.disabled = true;
+  try {
+    const body = { current_password: f.current_password.value };
+    const res = authMode === 'off'
+      ? await api('DELETE', '/api/auth', body)
+      : await api('PUT', '/api/auth', { ...body, new_password: f.new_password.value });
+    const wasEnabled = S.settings.auth_enabled;
+    S.settings = res.settings;
+    authDialog.close();
+    toast(authMode === 'off' ? 'Mot de passe désactivé' : wasEnabled ? 'Mot de passe modifié' : 'Mot de passe activé');
+    render();
+  } catch (err) {
+    setFormError(authForm, err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 /* ----- Administration : import et purge ----- */
 
@@ -1197,6 +1279,14 @@ document.addEventListener('click', async (e) => {
   if (action === 'open-filters') return setFiltersOpen(true);
   if (action === 'close-filters') return setFiltersOpen(false);
   if (action === 'purge') return openPurge();
+  if (action === 'toggle-theme') return toggleTheme();
+  if (action === 'auth-set') return openAuthDialog('set');
+  if (action === 'auth-off') return openAuthDialog('off');
+  if (action === 'logout') {
+    await api('POST', '/api/logout', {}).catch(() => {});
+    location.replace('/');
+    return;
+  }
   el.disabled = true;
   try {
     if (action === 'demo') {
@@ -1230,6 +1320,41 @@ document.addEventListener('click', async (e) => {
   } finally {
     el.disabled = false;
   }
+});
+
+/* ================= Thème et couleur d'accent (préférences de l'appareil) ================= */
+
+const ACCENTS = [
+  ['sapin', 'Vert sapin'], ['sarcelle', 'Sarcelle'], ['bleu', 'Bleu'], ['indigo', 'Indigo'], ['prune', 'Prune'],
+  ['framboise', 'Framboise'], ['terracotta', 'Terracotta'], ['moutarde', 'Moutarde'], ['ardoise', 'Ardoise'],
+];
+const root = document.documentElement;
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+const effectiveTheme = () => root.dataset.theme || (systemDark.matches ? 'dark' : 'light');
+
+function syncThemeButton() {
+  const next = effectiveTheme() === 'dark' ? 'clair' : 'sombre';
+  const b = $('.theme-btn');
+  b.setAttribute('aria-label', `Passer au thème ${next}`);
+  b.title = `Passer au thème ${next}`;
+}
+
+function toggleTheme() {
+  root.dataset.theme = effectiveTheme() === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('bernard-theme', root.dataset.theme); } catch { /* ignoré */ }
+  syncThemeButton();
+}
+systemDark.addEventListener('change', syncThemeButton);
+syncThemeButton();
+
+$('#accent-btn').addEventListener('click', (e) => {
+  const current = root.dataset.accent || 'sapin';
+  showMenu(e.currentTarget, ACCENTS.map(([id, label]) => ({
+    value: id, checked: id === current, html: `<span class="swatch sw-${id}" aria-hidden="true"></span><span>${label}</span>`,
+  })), (id) => {
+    root.dataset.accent = id;
+    try { localStorage.setItem('bernard-accent', id); } catch { /* ignoré */ }
+  }, { label: 'Couleur d’accentuation' });
 });
 
 // Raccourci clavier : « n » pour ajouter un produit

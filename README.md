@@ -5,10 +5,12 @@ Bernard est une petite application web auto-hébergée pour savoir **ce que l’
 - Interface en français, adaptée à l’ordinateur, à la tablette et au smartphone (thème clair/sombre automatique).
 - Espaces de rangement personnalisables (placard, frigo, congélateur…).
 - Ouverture partielle en un geste : « Ouvrir 1 paquet » retire un paquet du stock fermé et l’ajoute aux produits ouverts.
-- Niveau restant des produits entamés (plein, ¾, ½, ¼, presque vide) réglable d’un clic.
+- Niveau restant des produits entamés (¾, ½, ¼, presque vide) réglable d’un clic.
 - Catégories déduites automatiquement du nom et affichées sous forme d’icône.
 - Trois vues (Tout, Ouverts, Fermés) avec résumé, recherche, filtres en barre latérale (espace, catégorie, date), tri et version imprimable A4.
 - Export, import et purge des données depuis les paramètres.
+- Protection facultative par un mot de passe unique (sans comptes utilisateurs).
+- Thème clair ou sombre au choix, couleur d’accentuation personnalisable (sur ordinateur).
 - Récapitulatif Discord quotidien ou hebdomadaire, envoyé par le serveur, même navigateur fermé.
 
 ---
@@ -101,7 +103,9 @@ Les données sont alors stockées dans `./data/stock.db`.
 
 ### Sécurité
 
-Bernard n’a **pas de comptes utilisateurs** : il est pensé pour un réseau domestique. Si vous l’exposez sur Internet, placez-le derrière un reverse proxy avec authentification (Caddy, Nginx, Traefik, Authelia…) et HTTPS.
+Bernard n’a **pas de comptes utilisateurs**. Vous pouvez activer un **mot de passe unique** partagé par le foyer (voir « Mot de passe » plus bas).
+
+Si vous l’exposez sur Internet, activez le mot de passe **et** placez l’application derrière un reverse proxy en **HTTPS** (Caddy, Nginx, Traefik…) : le cookie de session reçoit alors l’attribut `Secure` (en-tête `X-Forwarded-Proto: https`). Derrière un reverse proxy, la limitation des tentatives de connexion s’applique à l’adresse du proxy, donc à tout le monde à la fois.
 
 ---
 
@@ -159,7 +163,7 @@ Si une entrée identique existe déjà (même nom, espace, unité, état et date
 - **− / +** : ajuste la quantité (pas adapté à l’unité : 1 paquet, 0,5 kg, 100 g…). À zéro, l’entrée est retirée et un bouton **Annuler** permet de revenir en arrière.
 - Cliquer sur la quantité ouvre la fiche pour saisir une valeur exacte.
 - **Ouvrir** (produits fermés) : choisissez combien ouvrir ; la date du jour est proposée (modifiable ou effaçable). Le stock fermé diminue et l’entrée ouverte est créée ou complétée.
-- **Reste** (produits ouverts) : cliquez sur la petite jauge pour indiquer ce qu’il reste dans le produit entamé — Plein, ¾, ½, ¼ ou Presque vide (orange à partir de ¼). Le niveau apparaît aussi à l’impression et dans les messages Discord. « Reste ? » signifie qu’il n’a pas été indiqué.
+- **Reste** (produits ouverts) : cliquez sur la petite jauge pour indiquer ce qu’il reste dans le produit entamé — ¾, ½, ¼ ou Presque vide (orange à partir de ¼). Le niveau apparaît aussi à l’impression et dans les messages Discord. « Reste ? » signifie qu’il n’a pas été indiqué.
 - **Crayon** : modifier la fiche, déplacer vers un autre espace, changer l’état.
 - **Corbeille** : suppression après confirmation.
 
@@ -180,7 +184,27 @@ Dans **Paramètres** : ajouter, renommer, réordonner (flèches) ou supprimer. S
 ### Administration (Paramètres)
 - **Exporter** télécharge un fichier JSON lisible (produits, espaces, historique de saisie, réglages). L’URL du webhook n’y figure jamais.
 - **Importer…** lit un export puis propose : **Ajouter au stock actuel** (les espaces manquants sont créés) ou **Remplacer tout** (produits, espaces, historique et réglages ; le webhook en place est conservé). Le fichier est vérifié entièrement avant tout changement : en cas d’erreur, rien n’est modifié et le produit fautif est indiqué.
-- **Purger…** propose **Vider le stock** (espaces, réglages et suggestions conservés) ou **Tout réinitialiser** (y compris le webhook). Il faut taper `PURGER` pour confirmer.
+- **Purger…** propose **Vider le stock** (espaces, réglages et suggestions conservés) ou **Tout réinitialiser** (y compris le webhook et le mot de passe). Il faut taper `PURGER` pour confirmer.
+- **Mot de passe d’accès** : voir ci-dessous.
+
+### Mot de passe
+Dans **Paramètres → Administration → Mot de passe d’accès → Activer…**, choisissez un mot de passe (6 caractères minimum). Il n’y a ni identifiant ni compte : tout le foyer partage ce mot de passe.
+- Chaque nouvel appareil affiche une page de connexion ; la session dure **30 jours** et se prolonge à chaque utilisation. L’appareil qui active la protection reste connecté.
+- **Modifier…** et **Désactiver…** demandent le mot de passe actuel. Le modifier déconnecte tous les autres appareils.
+- Le bouton de **déconnexion** apparaît en haut à droite quand la protection est active.
+- Après 5 essais erronés, la connexion est bloquée 30 secondes, puis de plus en plus longtemps (jusqu’à 15 minutes).
+- Le mot de passe est conservé haché (scrypt) sur le serveur et n’est jamais exporté.
+
+**Mot de passe oublié ?** Désactivez la protection depuis le serveur, puis définissez-en un nouveau :
+
+```bash
+docker compose exec bernard node --disable-warning=ExperimentalWarning server/reset-password.js
+```
+
+### Apparence
+- Le bouton **lune / soleil** en haut bascule entre thème clair et sombre (par défaut, celui du système).
+- Sur ordinateur, la **pastille de couleur** à côté permet de choisir la couleur d’accentuation parmi 9 teintes.
+- Ces deux choix sont mémorisés **sur chaque appareil** (navigateur).
 
 L’export JSON complète la sauvegarde du fichier SQLite décrite plus haut : il est pratique pour transférer le stock vers une autre installation.
 
@@ -221,7 +245,7 @@ docker compose exec bernard node --disable-warning=ExperimentalWarning server/se
 npm test
 ```
 
-20 tests couvrent : champs obligatoires et validation, unité par défaut, fusion des entrées identiques, **ouverture partielle** (diminution du stock fermé, création puis mise à jour de l’entrée ouverte, conservation de la date de péremption, disparition de l’entrée fermée à zéro), déplacement et changement d’état, suppression d’un espace non vide (refus, déplacement, suppression), règles des **alertes** (seuils, produits sans date, alertes désactivées), contenu du message Discord, **un seul envoi par période**, option « message identique », **non-divulgation du webhook** (API et messages d’erreur), protection CSRF et en-têtes de sécurité, **catégories** (déduction depuis un nom libre, modification), **niveau restant**, **export / import** (remplacement, fusion, fichier invalide sans effet), **purge** avec confirmation et migration d’une base existante.
+23 tests couvrent : champs obligatoires et validation, unité par défaut, fusion des entrées identiques, **ouverture partielle** (diminution du stock fermé, création puis mise à jour de l’entrée ouverte, conservation de la date de péremption, disparition de l’entrée fermée à zéro), déplacement et changement d’état, suppression d’un espace non vide (refus, déplacement, suppression), règles des **alertes** (seuils, produits sans date, alertes désactivées), contenu du message Discord, **un seul envoi par période**, option « message identique », **non-divulgation du webhook** (API et messages d’erreur), protection CSRF et en-têtes de sécurité, **catégories** (déduction depuis un nom libre, modification), **niveau restant**, **export / import** (remplacement, fusion, fichier invalide sans effet), **purge** avec confirmation, migration d’une base existante et **mot de passe** (activation, page de connexion, sessions, changement, désactivation, limitation des essais, hash jamais exposé).
 
 ### Vérification manuelle (5 minutes)
 
@@ -236,7 +260,9 @@ npm test
 9. **Catégories et reste** : vue **Ouverts**, cliquez sur « Pâtes, riz & féculents » dans les filtres → seuls les féculents entamés restent. Cliquez sur la jauge d’un produit et choisissez ½ → « Reste ½ ».
 10. **Administration** : **Exporter**, puis **Purger… → Vider le stock** (taper PURGER), puis **Importer…** le fichier → le stock revient à l’identique.
 11. **Persistance** : `docker compose restart` → les produits et paramètres sont toujours là.
-12. **Mobile** : sur un téléphone, la navigation est en bas de l’écran, le bouton **Filtres** ouvre le panneau latéral et le bouton **+** ouvre le formulaire en panneau.
+12. **Mot de passe** : activez-le dans Administration, ouvrez l’application dans une fenêtre privée → page de connexion ; un mauvais mot de passe est refusé, le bon donne accès. Le bouton de déconnexion ramène à la page de connexion.
+13. **Apparence** : le bouton lune/soleil change le thème, la pastille (ordinateur) change la couleur ; les deux restent après rechargement.
+14. **Mobile** : sur un téléphone, la navigation est en bas de l’écran, le bouton **Filtres** ouvre le panneau latéral et le bouton **+** ouvre le formulaire en panneau.
 
 ---
 
@@ -253,6 +279,8 @@ npm test
 | POST | `/api/import` | Import `{mode: "merge" \| "replace", data}` |
 | POST | `/api/purge` | Purge `{scope: "products" \| "all", confirm: "PURGER"}` |
 | POST | `/api/notifications/test` · `/send` | Tester le webhook · envoyer le récapitulatif |
+| POST | `/api/login` · `/api/logout` | Connexion · déconnexion |
+| PUT · DELETE | `/api/auth` | Définir/modifier · désactiver le mot de passe (`current_password` exigé s’il existe) |
 | GET | `/api/health` | Contrôle de santé (utilisé par Docker) |
 
 Les requêtes d’écriture doivent être envoyées en `application/json`.

@@ -39,6 +39,15 @@ const MIGRATIONS = [
   ALTER TABLE products ADD COLUMN remaining INTEGER CHECK (remaining IS NULL OR (remaining > 0 AND remaining <= 100));
   ALTER TABLE name_history ADD COLUMN category TEXT;
   `,
+  // v3 : sessions de connexion (mot de passe facultatif) ; suppression du niveau « plein »
+  `
+  CREATE TABLE sessions (
+    token_hash TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  );
+  UPDATE products SET remaining = NULL WHERE remaining >= 100;
+  `,
 ];
 
 // Traitements JavaScript associés à une migration (exécutés juste après elle).
@@ -124,9 +133,10 @@ export function webhookUrl(settings) {
 
 /** Paramètres renvoyés au navigateur : l'URL du webhook n'en sort jamais. */
 export function publicSettings(settings) {
-  const { webhook_url, ...rest } = settings;
+  const { webhook_url, auth_password, ...rest } = settings;
   return {
     ...rest,
+    auth_enabled: Boolean(auth_password),
     webhook_configured: Boolean(webhookUrl(settings)),
     webhook_from_env: Boolean(process.env.DISCORD_WEBHOOK_URL),
   };

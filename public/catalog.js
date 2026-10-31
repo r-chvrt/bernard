@@ -18,9 +18,8 @@ export const CATEGORIES = [
 export const CATEGORY_IDS = new Set(CATEGORIES.map((c) => c.id));
 export const DEFAULT_CATEGORY = 'autre';
 
-/** Niveaux proposés pour le reste d'un produit entamé (en %). */
+/** Niveaux proposés pour le reste d'un produit entamé (en %). Un produit ouvert n'est jamais « plein ». */
 export const REMAINING_LEVELS = [
-  { value: 100, label: 'Plein', short: 'plein' },
   { value: 75, label: '¾', short: '¾' },
   { value: 50, label: '½', short: '½' },
   { value: 25, label: '¼', short: '¼' },
