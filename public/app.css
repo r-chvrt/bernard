@@ -187,13 +187,12 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; outline: none; }
   --hue: var(--stat-tint, var(--accent));
   content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
   background-image:
-    radial-gradient(circle, color-mix(in oklab, var(--hue) 26%, transparent) 1.2px, transparent 1.6px),
-    linear-gradient(color-mix(in oklab, var(--hue) 10%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in oklab, var(--hue) 10%, transparent) 1px, transparent 1px);
+    radial-gradient(circle, color-mix(in oklab, var(--hue) 30%, transparent) 1px, transparent 1.5px),
+    radial-gradient(circle, color-mix(in oklab, var(--hue) 30%, transparent) 1px, transparent 1.5px);
   background-size: 16px 16px;
-  background-position: -8px -8px, 0 0, 0 0;
-  -webkit-mask-image: radial-gradient(110% 150% at 0% 0%, #000, transparent 65%);
-  mask-image: radial-gradient(110% 150% at 0% 0%, #000, transparent 65%);
+  background-position: 0 0, 8px 8px;
+  -webkit-mask-image: radial-gradient(130% 140% at 0% 0%, rgb(0 0 0 / 0.85), rgb(0 0 0 / 0.3) 40%, transparent 75%);
+  mask-image: radial-gradient(130% 140% at 0% 0%, rgb(0 0 0 / 0.85), rgb(0 0 0 / 0.3) 40%, transparent 75%);
 }
 .stat.open { --stat-tint: var(--open); }
 .stat.warn { --stat-tint: var(--warn-line); }
@@ -323,44 +322,46 @@ input:focus, select:focus { border-color: var(--focus); outline: 2px solid color
 /* ----- Cartes produits : dégradé maillé teinté selon l'état, trame fine, relief doux ----- */
 .list { gap: 10px; }
 .item {
-  /* --hue : couleur de l'état ; teintes, bordure et maillage en dérivent */
+  /* --hue : couleur de l'état ; dégradé maillé, bordure et trame en dérivent */
   --hue: var(--accent);
-  --tint: color-mix(in oklab, var(--hue) 14%, transparent);
-  --tint-2: color-mix(in oklab, var(--hue) 8%, transparent);
-  --tint-3: color-mix(in oklab, var(--hue) 5%, transparent);
-  --mesh-line: color-mix(in oklab, var(--hue) 11%, transparent);
-  --mesh-node: color-mix(in oklab, var(--hue) 30%, transparent);
+  --m1: color-mix(in oklab, var(--hue) 15%, transparent);
+  --m2: color-mix(in oklab, var(--hue) 9%, transparent);
+  --m3: color-mix(in oklab, var(--hue) 7%, transparent);
+  --m4: color-mix(in oklab, var(--hue) 5%, transparent);
+  --mesh-node: color-mix(in oklab, var(--hue) 32%, transparent);
   position: relative; isolation: isolate;
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 14px;
   padding: 12px; border-radius: 18px;
   border: 1px solid color-mix(in oklab, var(--hue) 10%, var(--border));
+  /* Dégradé maillé : plusieurs halos qui se fondent les uns dans les autres */
   background:
-    radial-gradient(75% 150% at 0% 0%, var(--tint), transparent 72%),
-    radial-gradient(50% 130% at 100% 115%, var(--tint-2), transparent 72%),
-    radial-gradient(45% 100% at 55% -25%, var(--tint-3), transparent 72%),
+    radial-gradient(at 0% 0%, var(--m1) 0, transparent 55%),
+    radial-gradient(at 38% 0%, var(--m3) 0, transparent 45%),
+    radial-gradient(at 100% 100%, var(--m2) 0, transparent 50%),
+    radial-gradient(at 18% 100%, var(--m4) 0, transparent 50%),
     var(--surface);
   box-shadow: var(--card-shadow);
   transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
-/* Maillage : lignes fines et points aux intersections, estompés depuis le coin haut-gauche */
+/* Trame de points fine, qui s'efface en douceur depuis le coin haut-gauche */
 .item::before {
   content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  /* deux trames décalées d'une demi-maille : points en quinconce, effet filet plutôt que grille */
   background-image:
-    radial-gradient(circle, var(--mesh-node) 1.3px, transparent 1.7px),
-    linear-gradient(var(--mesh-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--mesh-line) 1px, transparent 1px);
+    radial-gradient(circle, var(--mesh-node) 1px, transparent 1.5px),
+    radial-gradient(circle, var(--mesh-node) 1px, transparent 1.5px);
   background-size: 16px 16px;
-  background-position: -8px -8px, 0 0, 0 0;
-  -webkit-mask-image: radial-gradient(120% 170% at 0% 0%, #000 0%, rgb(0 0 0 / 0.6) 30%, transparent 68%);
-  mask-image: radial-gradient(120% 170% at 0% 0%, #000 0%, rgb(0 0 0 / 0.6) 30%, transparent 68%);
+  background-position: 0 0, 8px 8px;
+  -webkit-mask-image: radial-gradient(150% 140% at 0% 0%, #000 0%, rgb(0 0 0 / 0.55) 30%, rgb(0 0 0 / 0.18) 58%, transparent 82%);
+  mask-image: radial-gradient(150% 140% at 0% 0%, #000 0%, rgb(0 0 0 / 0.55) 30%, rgb(0 0 0 / 0.18) 58%, transparent 82%);
 }
 .item:hover {
   box-shadow: var(--card-shadow-hover);
   border-color: color-mix(in oklab, var(--hue) 22%, var(--border));
 }
 .item.is-open { --hue: var(--open); }
-.item.is-soon { --hue: var(--warn-line); --tint: color-mix(in oklab, var(--hue) 20%, transparent); }
-.item.is-expired { --hue: var(--danger); --tint: color-mix(in oklab, var(--hue) 17%, transparent); }
+.item.is-soon { --hue: var(--warn-line); --m1: color-mix(in oklab, var(--hue) 21%, transparent); }
+.item.is-expired { --hue: var(--danger); --m1: color-mix(in oklab, var(--hue) 17%, transparent); }
 /* Apparition en fondu vers le haut (nouveaux éléments uniquement) */
 .item.enter { animation: fade-up 0.42s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--i, 0) * 32ms); }
 @keyframes fade-up { from { opacity: 0; transform: translateY(10px); } }

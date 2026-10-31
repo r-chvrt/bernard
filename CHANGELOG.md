@@ -6,7 +6,7 @@ Les migrations de base de données sont automatiques au démarrage.
 ## [0.4.0] — 2026-10-31
 
 ### Modifié
-- Cartes produits : maillage (lignes et points) et dégradés plus marqués, bordures et ombres affinées.
+- Cartes produits : dégradé maillé (halos de couleur fondus) et trame de points en quinconce estompée, bordures et ombres affinées.
 - Thème clair par défaut, quel que soit le réglage du système (le thème sombre reste disponible via le bouton).
 - Image Docker épinglée (`node:24.22.2-alpine3.24` + empreinte) ; plus besoin de `--disable-warning` dans les commandes.
 - Le fichier Docker Compose n’est plus versionné : modèle fourni dans `compose.example.yml`.
