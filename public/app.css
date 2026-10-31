@@ -1,5 +1,5 @@
 /* ===== Thème =====
-   Thème : automatique (système) ou forcé via <html data-theme="light|dark">.
+   Thème : clair par défaut, sombre via <html data-theme="dark"> (bouton lune/soleil).
    Accent : une seule variable --accent (préréglages via <html data-accent="…">),
    dont dérivent toutes les couleurs « primaires ». */
 :root {
@@ -26,9 +26,9 @@
   --radius: 14px;
   --radius-sm: 9px;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 4px 16px rgb(0 0 0 / 0.05);
-  --card-highlight: rgb(255 255 255 / 0.9);
-  --card-shadow: 0 1px 2px rgb(30 40 34 / 0.05), 0 12px 28px -18px rgb(30 40 34 / 0.28);
-  --card-shadow-hover: 0 2px 4px rgb(30 40 34 / 0.06), 0 18px 36px -18px rgb(30 40 34 / 0.38);
+  --card-highlight: transparent;
+  --card-shadow: 0 1px 2px rgb(30 40 34 / 0.04);
+  --card-shadow-hover: 0 1px 2px rgb(30 40 34 / 0.05), 0 6px 16px -10px rgb(30 40 34 / 0.18);
   --mesh-dot: rgb(30 40 34 / 0.075);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: light;
@@ -54,42 +54,12 @@
   --focus: #8ab8f0;
   --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6' fill='none' stroke='%23a3aca5' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
-  --card-highlight: rgb(255 255 255 / 0.05);
-  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 28px -18px rgb(0 0 0 / 0.7);
-  --card-shadow-hover: 0 2px 4px rgb(0 0 0 / 0.4), 0 18px 36px -18px rgb(0 0 0 / 0.8);
+  --card-highlight: transparent;
+  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  --card-shadow-hover: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 16px -10px rgb(0 0 0 / 0.6);
   --mesh-dot: rgb(255 255 255 / 0.07);
   color-scheme: dark;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #121614;
-    --surface: #1b201d;
-    --surface-2: #252b27;
-    --text: #e8ebe8;
-    --muted: #a3aca5;
-    --border: #323a35;
-    --primary: color-mix(in oklab, var(--accent) 58%, white);
-    --primary-strong: color-mix(in oklab, var(--accent) 40%, white);
-    --primary-soft: color-mix(in oklab, var(--accent) 26%, #1b201d);
-    --on-primary: #0e1511;
-    --open: #8ab8f0;
-    --open-soft: #1c2a3b;
-    --warn: #f3c46b;
-    --warn-soft: #3a2e14;
-    --warn-line: #d39b2a;
-    --danger: #ff8a80;
-    --danger-soft: #3d1d1b;
-    --focus: #8ab8f0;
-    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6' fill='none' stroke='%23a3aca5' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
-    --card-highlight: rgb(255 255 255 / 0.05);
-    --card-shadow: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 28px -18px rgb(0 0 0 / 0.7);
-    --card-shadow-hover: 0 2px 4px rgb(0 0 0 / 0.4), 0 18px 36px -18px rgb(0 0 0 / 0.8);
-    --mesh-dot: rgb(255 255 255 / 0.07);
-    color-scheme: dark;
-  }
-}
-
 /* Couleurs d'accent (contraste suffisant avec du texte blanc) */
 :root[data-accent="sapin"]      { --accent: #2f6b4f; }
 :root[data-accent="sarcelle"]   { --accent: #0f6f6a; }
@@ -208,9 +178,22 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; outline: none; }
   text-align: left; border: 1px solid color-mix(in oklab, var(--border) 80%, transparent); border-radius: 16px;
   padding: 10px 14px; display: flex; flex-direction: column; gap: 2px;
   background:
-    radial-gradient(80% 120% at 0% 0%, color-mix(in oklab, var(--stat-tint, var(--accent)) 9%, transparent), transparent 70%),
+    radial-gradient(80% 130% at 0% 0%, color-mix(in oklab, var(--stat-tint, var(--accent)) 13%, transparent), transparent 72%),
     linear-gradient(180deg, var(--surface), color-mix(in oklab, var(--surface) 93%, var(--bg)));
   box-shadow: inset 0 1px 0 var(--card-highlight), var(--card-shadow);
+}
+.stat { position: relative; isolation: isolate; }
+.stat::before {
+  --hue: var(--stat-tint, var(--accent));
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background-image:
+    radial-gradient(circle, color-mix(in oklab, var(--hue) 26%, transparent) 1.2px, transparent 1.6px),
+    linear-gradient(color-mix(in oklab, var(--hue) 10%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--hue) 10%, transparent) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -8px -8px, 0 0, 0 0;
+  -webkit-mask-image: radial-gradient(110% 150% at 0% 0%, #000, transparent 65%);
+  mask-image: radial-gradient(110% 150% at 0% 0%, #000, transparent 65%);
 }
 .stat.open { --stat-tint: var(--open); }
 .stat.warn { --stat-tint: var(--warn-line); }
@@ -231,10 +214,6 @@ button.stat:hover { border-color: var(--muted); }
 .theme-btn .i-sun { display: none; }
 :root[data-theme="dark"] .theme-btn .i-sun { display: block; }
 :root[data-theme="dark"] .theme-btn .i-moon { display: none; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-btn .i-sun { display: block; }
-  :root:not([data-theme="light"]) .theme-btn .i-moon { display: none; }
-}
 .accent-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px color-mix(in oklab, var(--accent) 50%, transparent); }
 .swatch { width: 18px; height: 18px; border-radius: 50%; background: var(--sw); flex: none; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12); }
 @media (max-width: 760px) { .accent-btn { display: none !important; } }
@@ -344,49 +323,44 @@ input:focus, select:focus { border-color: var(--focus); outline: 2px solid color
 /* ----- Cartes produits : dégradé maillé teinté selon l'état, trame fine, relief doux ----- */
 .list { gap: 10px; }
 .item {
-  --tint: color-mix(in oklab, var(--accent) 9%, transparent);
-  --tint-2: color-mix(in oklab, var(--accent) 5%, transparent);
-  --tint-3: transparent;
+  /* --hue : couleur de l'état ; teintes, bordure et maillage en dérivent */
+  --hue: var(--accent);
+  --tint: color-mix(in oklab, var(--hue) 14%, transparent);
+  --tint-2: color-mix(in oklab, var(--hue) 8%, transparent);
+  --tint-3: color-mix(in oklab, var(--hue) 5%, transparent);
+  --mesh-line: color-mix(in oklab, var(--hue) 11%, transparent);
+  --mesh-node: color-mix(in oklab, var(--hue) 30%, transparent);
   position: relative; isolation: isolate;
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 14px;
-  padding: 12px 12px 12px 12px; border-radius: 18px;
-  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  padding: 12px; border-radius: 18px;
+  border: 1px solid color-mix(in oklab, var(--hue) 10%, var(--border));
   background:
-    radial-gradient(70% 140% at 0% 0%, var(--tint), transparent 70%),
-    radial-gradient(45% 120% at 100% 110%, var(--tint-2), transparent 70%),
-    radial-gradient(40% 90% at 55% -20%, var(--tint-3), transparent 70%),
-    linear-gradient(180deg, var(--surface), color-mix(in oklab, var(--surface) 92%, var(--bg)));
-  box-shadow: inset 0 1px 0 var(--card-highlight), var(--card-shadow);
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    radial-gradient(75% 150% at 0% 0%, var(--tint), transparent 72%),
+    radial-gradient(50% 130% at 100% 115%, var(--tint-2), transparent 72%),
+    radial-gradient(45% 100% at 55% -25%, var(--tint-3), transparent 72%),
+    var(--surface);
+  box-shadow: var(--card-shadow);
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
-/* Trame en pointillés, estompée vers la droite */
+/* Maillage : lignes fines et points aux intersections, estompés depuis le coin haut-gauche */
 .item::before {
   content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
-  background-image: radial-gradient(var(--mesh-dot) 1px, transparent 1.3px);
-  background-size: 12px 12px;
-  -webkit-mask-image: linear-gradient(105deg, #000 0%, transparent 42%);
-  mask-image: linear-gradient(105deg, #000 0%, transparent 42%);
+  background-image:
+    radial-gradient(circle, var(--mesh-node) 1.3px, transparent 1.7px),
+    linear-gradient(var(--mesh-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mesh-line) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -8px -8px, 0 0, 0 0;
+  -webkit-mask-image: radial-gradient(120% 170% at 0% 0%, #000 0%, rgb(0 0 0 / 0.6) 30%, transparent 68%);
+  mask-image: radial-gradient(120% 170% at 0% 0%, #000 0%, rgb(0 0 0 / 0.6) 30%, transparent 68%);
 }
 .item:hover {
-  transform: translateY(-1px);
-  box-shadow: inset 0 1px 0 var(--card-highlight), var(--card-shadow-hover);
-  border-color: color-mix(in oklab, var(--border) 60%, var(--muted));
+  box-shadow: var(--card-shadow-hover);
+  border-color: color-mix(in oklab, var(--hue) 22%, var(--border));
 }
-.item.is-open {
-  --tint: color-mix(in oklab, var(--open) 13%, transparent);
-  --tint-2: color-mix(in oklab, var(--open) 6%, transparent);
-}
-.item.is-soon {
-  --tint: color-mix(in oklab, var(--warn-line) 20%, transparent);
-  --tint-2: color-mix(in oklab, var(--warn-line) 9%, transparent);
-  --tint-3: color-mix(in oklab, var(--warn-line) 7%, transparent);
-}
-.item.is-expired {
-  --tint: color-mix(in oklab, var(--danger) 17%, transparent);
-  --tint-2: color-mix(in oklab, var(--danger) 8%, transparent);
-  --tint-3: color-mix(in oklab, var(--danger) 6%, transparent);
-  border-color: color-mix(in oklab, var(--danger) 22%, var(--border));
-}
+.item.is-open { --hue: var(--open); }
+.item.is-soon { --hue: var(--warn-line); --tint: color-mix(in oklab, var(--hue) 20%, transparent); }
+.item.is-expired { --hue: var(--danger); --tint: color-mix(in oklab, var(--hue) 17%, transparent); }
 /* Apparition en fondu vers le haut (nouveaux éléments uniquement) */
 .item.enter { animation: fade-up 0.42s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--i, 0) * 32ms); }
 @keyframes fade-up { from { opacity: 0; transform: translateY(10px); } }
@@ -399,9 +373,9 @@ input:focus, select:focus { border-color: var(--focus); outline: 2px solid color
 .cat-badge {
   width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; font-size: 1.35rem;
   flex: none; cursor: default;
-  background: linear-gradient(160deg, var(--surface), color-mix(in oklab, var(--surface-2) 85%, var(--tint)));
-  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
-  box-shadow: inset 0 1px 0 var(--card-highlight), 0 2px 6px -3px rgb(0 0 0 / 0.18);
+  background: color-mix(in oklab, var(--surface) 75%, transparent);
+  border: 1px solid color-mix(in oklab, var(--hue, var(--accent)) 14%, var(--border));
+  box-shadow: none;
 }
 
 /* Jauge du reste d'un produit entamé */

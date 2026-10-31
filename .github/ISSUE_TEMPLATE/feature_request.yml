@@ -1,0 +1,15 @@
+name: Proposer une amélioration
+description: Une idée pour rendre Bernard plus utile au quotidien
+labels: ["amélioration"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Quel besoin ?
+      description: La situation concrète où l’application ne suffit pas aujourd’hui.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Solution envisagée

@@ -1329,8 +1329,7 @@ const ACCENTS = [
   ['framboise', 'Framboise'], ['terracotta', 'Terracotta'], ['moutarde', 'Moutarde'], ['ardoise', 'Ardoise'],
 ];
 const root = document.documentElement;
-const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
-const effectiveTheme = () => root.dataset.theme || (systemDark.matches ? 'dark' : 'light');
+const effectiveTheme = () => (root.dataset.theme === 'dark' ? 'dark' : 'light');
 
 function syncThemeButton() {
   const next = effectiveTheme() === 'dark' ? 'clair' : 'sombre';
@@ -1344,7 +1343,6 @@ function toggleTheme() {
   try { localStorage.setItem('bernard-theme', root.dataset.theme); } catch { /* ignoré */ }
   syncThemeButton();
 }
-systemDark.addEventListener('change', syncThemeButton);
 syncThemeButton();
 
 $('#accent-btn').addEventListener('click', (e) => {

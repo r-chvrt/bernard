@@ -1,0 +1,35 @@
+# Exemple de fichier Docker Compose.
+#
+# Organisation conseillée : gardez votre configuration locale EN DEHORS du dépôt,
+# pour pouvoir faire « git pull » sans conflit :
+#
+#   mon-dossier/
+#   ├── docker-compose.yml   ← copie de ce fichier
+#   ├── .env                 ← copie de bernard/.env.example
+#   └── bernard/             ← ce dépôt (git clone)
+#
+# Puis, depuis « mon-dossier » :  docker compose up -d --build
+#
+# (Si vous préférez placer docker-compose.yml dans le dépôt lui-même, remplacez
+#  « build: ./bernard » par « build: . » ; ce nom de fichier est ignoré par git.)
+
+services:
+  bernard:
+    build: ./bernard
+    image: bernard:latest
+    container_name: bernard
+    restart: unless-stopped
+    ports:
+      - "${BERNARD_PORT:-3000}:3000"
+    environment:
+      # Fuseau horaire par défaut (modifiable ensuite dans Paramètres).
+      TZ: ${TZ:-Europe/Paris}
+      # Facultatif : webhook Discord défini ici plutôt que dans l'interface.
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    volumes:
+      - bernard-data:/data
+    # Ressources modestes : ~20 Mo de RAM en fonctionnement normal.
+    mem_limit: 256m
+
+volumes:
+  bernard-data:

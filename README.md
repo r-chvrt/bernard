@@ -51,17 +51,34 @@ test/          tests automatisés (node --test)
 
 Prérequis : Docker avec le plugin Compose.
 
+Organisation conseillée : votre configuration (`docker-compose.yml`, `.env`) **à côté** du dépôt, et non dedans,
+pour que `git pull` ne touche jamais à vos réglages :
+
+```
+mon-dossier/
+├── docker-compose.yml   ← copie de bernard/compose.example.yml
+├── .env                 ← copie de bernard/.env.example (facultatif)
+└── bernard/             ← ce dépôt
+```
+
 ```bash
 git clone <url-du-depot> bernard
 ```
 
 ```bash
-cd bernard
+cp bernard/compose.example.yml docker-compose.yml
+```
+
+```bash
+cp bernard/.env.example .env
 ```
 
 ```bash
 docker compose up -d --build
 ```
+
+Le modèle contient `build: ./bernard`. Si vous préférez garder `docker-compose.yml` **dans** le dépôt
+(ce nom est ignoré par git), remplacez-le par `build: .`.
 
 Ouvrez ensuite **http://localhost:3000** (ou `http://<ip-du-serveur>:3000`).
 
@@ -82,14 +99,15 @@ Variables internes au conteneur (rarement utiles) : `PORT` (3000), `DATA_DIR` (`
 ### Mise à jour
 
 ```bash
-git pull
+git -C bernard pull
 ```
 
 ```bash
 docker compose up -d --build
 ```
 
-Les données sont dans le volume `bernard-data` et ne sont pas touchées. Le schéma de la base est mis à jour automatiquement au démarrage.
+Les données sont dans le volume Docker `<projet>_bernard-data` (le préfixe est le nom du dossier qui contient
+`docker-compose.yml` ; `docker volume ls` l’affiche) et ne sont pas touchées. Le schéma de la base est mis à jour automatiquement au démarrage.
 
 ### Lancement sans Docker
 
@@ -116,7 +134,7 @@ Toutes les données (produits, espaces, paramètres, webhook) sont dans un seul 
 **Créer une sauvegarde** (cohérente, possible pendant que l’application tourne) :
 
 ```bash
-docker compose exec bernard node --disable-warning=ExperimentalWarning server/backup.js /data/backup.db
+docker compose exec bernard node server/backup.js /data/backup.db
 ```
 
 **La copier sur la machine hôte :**
@@ -195,14 +213,37 @@ Dans **Paramètres → Administration → Mot de passe d’accès → Activer…
 - Après 5 essais erronés, la connexion est bloquée 30 secondes, puis de plus en plus longtemps (jusqu’à 15 minutes).
 - Le mot de passe est conservé haché (scrypt) sur le serveur et n’est jamais exporté.
 
-**Mot de passe oublié ?** Désactivez la protection depuis le serveur, puis définissez-en un nouveau :
+**Mot de passe oublié ?** Désactivez la protection depuis le serveur, puis définissez-en un nouveau dans l’interface.
+Choisissez la commande selon votre situation :
+
+Conteneur démarré (le plus simple) :
 
 ```bash
-docker compose exec bernard node --disable-warning=ExperimentalWarning server/reset-password.js
+docker exec bernard node server/reset-password.js
 ```
 
+Conteneur arrêté, depuis le dossier qui contient `docker-compose.yml` :
+
+```bash
+docker compose run --rm --no-deps bernard node server/reset-password.js
+```
+
+Sans Docker Compose (`docker run` sur le volume de données ; arrêtez d’abord le conteneur s’il tourne) :
+
+```bash
+docker volume ls --filter name=bernard
+```
+
+```bash
+docker run --rm -v mon-dossier_bernard-data:/data bernard:latest node server/reset-password.js
+```
+
+Remplacez `mon-dossier_bernard-data` par le nom affiché par la commande précédente, et `bernard:latest` par le nom
+de votre image si vous l’avez changé. Le changement est immédiat : inutile de redémarrer, les appareils accèdent
+de nouveau à l’application sans mot de passe.
+
 ### Apparence
-- Le bouton **lune / soleil** en haut bascule entre thème clair et sombre (par défaut, celui du système).
+- Le bouton **lune / soleil** en haut bascule entre thème clair et sombre. Le thème **clair** est utilisé par défaut, quel que soit le réglage du système.
 - Sur ordinateur, la **pastille de couleur** à côté permet de choisir la couleur d’accentuation parmi 9 teintes.
 - Ces deux choix sont mémorisés **sur chaque appareil** (navigateur).
 
@@ -212,7 +253,7 @@ L’export JSON complète la sauvegarde du fichier SQLite décrite plus haut : i
 Sur l’écran d’accueil vide, **Charger des exemples** ajoute 18 produits (dates calculées par rapport à aujourd’hui) pour découvrir l’interface. En ligne de commande :
 
 ```bash
-docker compose exec bernard node --disable-warning=ExperimentalWarning server/seed.js
+docker compose exec bernard node server/seed.js
 ```
 
 ---
@@ -266,7 +307,17 @@ npm test
 
 ---
 
-## 7. API (pour information)
+## 7. Maintenance du projet
+
+- **Dependabot** (`.github/dependabot.yml`) ouvre chaque lundi des PR de mise à jour pour l’image de base Docker
+  (épinglée par version et empreinte), les actions GitHub et d’éventuelles dépendances npm. Les montées de version
+  majeure de Node (nouvelle LTS) restent manuelles : elles demandent de vérifier `node:sqlite`.
+- **Intégration continue** (`.github/workflows/ci.yml`) : tests sur Node 22.13 (minimum supporté) et Node 24,
+  puis construction de l’image, démarrage et contrôle de santé. Chaque PR Dependabot est donc testée automatiquement.
+- **Modèles** d’issue et de PR, politique de sécurité (`SECURITY.md`), journal des versions (`CHANGELOG.md`)
+  et feuille de route (`ROADMAP.md`).
+
+## 8. API (pour information)
 
 | Méthode | Route | Rôle |
 |---|---|---|

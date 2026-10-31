@@ -1,0 +1,37 @@
+# Mises à jour automatiques des dépendances (PR hebdomadaires).
+version: 2
+updates:
+  # Image de base Docker (node:…-alpine…, épinglée par version et empreinte)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps(docker)"
+    ignore:
+      # Les changements de version majeure de Node (LTS) se font à la main :
+      # ils demandent de vérifier node:sqlite et de mettre à jour la CI.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+
+  # Actions GitHub utilisées par la CI
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Dépendances npm (aucune aujourd'hui : surveille celles qui seraient ajoutées)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps(npm)"

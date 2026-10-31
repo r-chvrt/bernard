@@ -1,6 +1,6 @@
 {
   "name": "bernard",
-  "version": "1.0.0",
+  "version": "0.4.0",
   "description": "Gestion simple du stock alimentaire du foyer (auto-hébergée)",
   "private": true,
   "type": "module",

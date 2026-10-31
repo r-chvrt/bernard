@@ -1,0 +1,31 @@
+name: Signaler un problème
+description: Quelque chose ne fonctionne pas comme prévu
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Que se passe-t-il ?
+      description: Ce que vous avez fait, ce que vous attendiez et ce qui s’est produit.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      placeholder: "1. Ouvrir…\n2. Cliquer sur…"
+  - type: input
+    id: version
+    attributes:
+      label: Version (commit ou tag)
+  - type: input
+    id: browser
+    attributes:
+      label: Navigateur et appareil
+      placeholder: ex. Firefox 140 sur Android
+  - type: textarea
+    id: logs
+    attributes:
+      label: Journaux du conteneur (docker logs bernard)
+      description: Retirez toute information personnelle. Les journaux ne contiennent jamais l’URL du webhook.
+      render: text
