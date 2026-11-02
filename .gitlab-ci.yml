@@ -1,4 +1,4 @@
-# CI Bernard : tests Node, construction de l'image Docker poussée dans le registre GitLab du projet,
+# CI Bernard : tests Node, qualité du code (Biome), construction de l'image Docker poussée dans le registre GitLab du projet,
 # contrôle de santé du conteneur et analyse Trivy (dépôt + image).
 #
 # Étiquettes publiées dans $CI_REGISTRY_IMAGE :
@@ -38,12 +38,14 @@ variables:
   cache:
     key: trivy-db
     paths: [.trivycache/]
-  artifacts:
-    when: always
-    paths: [trivy-*.json]
-    reports:
-      junit: trivy-*-junit.xml
-    expire_in: 30 days
+  # Une seule analyse produit le JSON complet (toutes sévérités) ; les autres rapports en sont dérivés
+  # par « trivy convert » : JUnit (onglet Tests du pipeline et de la MR) et HTML lisible dans un navigateur.
+  after_script:
+    - |
+      if [ -s "trivy-$REPORT.json" ]; then
+        trivy convert --format template --template "@/contrib/junit.tpl" --output "trivy-$REPORT-junit.xml" "trivy-$REPORT.json"
+        trivy convert --format template --template "@/contrib/html.tpl" --output "trivy-$REPORT.html" "trivy-$REPORT.json"
+      fi
 
 # ------------------------------------------------------------------ test
 tests:
@@ -56,6 +58,25 @@ tests:
   script:
     - for f in server/*.js public/*.js test/*.js; do node --check "$f"; done
     - npm test
+
+# Qualité du code : lint Biome (JS, CSS, HTML) au format Code Quality de GitLab. Les nouveaux problèmes
+# apparaissent dans le widget de la MR. Job informatif : il ne bloque pas le pipeline.
+code-quality:
+  stage: test
+  needs: []
+  image: node:24.22.2-alpine
+  variables:
+    BIOME_VERSION: "2.6.4"
+  script:
+    - npx --yes "@biomejs/biome@$BIOME_VERSION" lint --reporter=gitlab server public test > gl-code-quality.json || true
+    - test -s gl-code-quality.json  # le rapport doit exister (sinon Biome a planté)
+    - npx --yes "@biomejs/biome@$BIOME_VERSION" lint --max-diagnostics=none server public test || true  # lisible dans le log
+  artifacts:
+    when: always
+    paths: [gl-code-quality.json]
+    reports:
+      codequality: gl-code-quality.json
+    expire_in: 30 days
 
 # ------------------------------------------------------------------ build
 # Le runner Docker n'est pas privilégié (pas de Docker-in-Docker) : l'image est construite avec
@@ -111,12 +132,18 @@ trivy-image:
     TRIVY_USERNAME: $CI_REGISTRY_USER
     TRIVY_PASSWORD: $CI_REGISTRY_PASSWORD
     TRIVY_SCANNERS: vuln,secret
+    REPORT: image
   script:
-    # Rapport complet (toutes sévérités), affiché dans l'onglet Tests du pipeline et de la MR
-    - trivy image --exit-code 0 --format template --template "@/contrib/junit.tpl" --output trivy-image-junit.xml "$IMAGE"
     - trivy image --exit-code 0 --format json --output trivy-image.json "$IMAGE"
     # Échec sur HIGH / CRITICAL ayant un correctif disponible (exceptions justifiées dans .trivyignore)
     - trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE"
+  artifacts:
+    when: always
+    expose_as: Rapport Trivy image
+    paths: [trivy-image.html, trivy-image.json]
+    reports:
+      junit: trivy-image-junit.xml
+    expire_in: 30 days
 
 # Dépôt : Dockerfile / compose (misconfig), dépendances et secrets.
 trivy-repo:
@@ -125,10 +152,17 @@ trivy-repo:
   needs: []
   variables:
     TRIVY_SCANNERS: vuln,secret,misconfig
+    REPORT: repo
   script:
-    - trivy fs --exit-code 0 --format template --template "@/contrib/junit.tpl" --output trivy-repo-junit.xml .
     - trivy fs --exit-code 0 --format json --output trivy-repo.json .
     - trivy fs --exit-code 1 --severity HIGH,CRITICAL .
+  artifacts:
+    when: always
+    expose_as: Rapport Trivy depot
+    paths: [trivy-repo.html, trivy-repo.json]
+    reports:
+      junit: trivy-repo-junit.xml
+    expire_in: 30 days
 
 # ------------------------------------------------------------------ release
 # Ré-étiquette l'image déjà analysée et testée (aucune reconstruction).
