@@ -3,6 +3,15 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon [SemVer](https://semver.org/lang/fr/).
 Les migrations de base de données sont automatiques au démarrage.
 
+## [Non publié]
+
+### Ajouté
+- GitLab CI : tests Node 22.13 et 24, image Docker poussée dans le registre GitLab, contrôle de santé et analyse Trivy
+  (image et dépôt) ; publication de `:latest` et des tags après analyse.
+
+### Modifié
+- Image Docker : npm, npx, corepack et yarn retirés (inutiles à l’exécution, seule source des CVE HIGH remontées par Trivy).
+
 ## [0.4.0] — 2026-10-31
 
 ### Modifié
