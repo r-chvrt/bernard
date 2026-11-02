@@ -12,7 +12,11 @@ COPY package.json ./
 COPY server ./server
 COPY public ./public
 
-RUN mkdir -p /data && chown node:node /data
+# npm, npx, corepack et yarn sont inutiles à l'exécution (aucune dépendance npm) : on les retire pour réduire
+# la surface d'attaque (leurs dépendances embarquées sont la seule source de CVE remontées par Trivy).
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+           /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+ && mkdir -p /data && chown node:node /data
 USER node
 VOLUME ["/data"]
 EXPOSE 3000

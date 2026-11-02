@@ -1,0 +1,153 @@
+# CI Bernard : tests Node, construction de l'image Docker poussée dans le registre GitLab du projet,
+# contrôle de santé du conteneur et analyse Trivy (dépôt + image).
+#
+# Étiquettes publiées dans $CI_REGISTRY_IMAGE :
+#   :<sha du commit>   chaque pipeline (MR comprises) — image analysée et testée
+#   :latest            branche par défaut, une fois l'analyse et le contrôle de santé passés
+#   :<tag git>         tags git (ex. v0.5.0), mêmes conditions
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never  # branche avec MR ouverte : seul le pipeline de MR tourne
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+stages:
+  - test
+  - build
+  - scan
+  - release
+
+default:
+  interruptible: true
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  NODE_OPTIONS: --disable-warning=ExperimentalWarning
+
+.trivy:
+  image:
+    name: aquasec/trivy:0.76.1
+    entrypoint: [""]
+  variables:
+    TRIVY_CACHE_DIR: .trivycache
+    TRIVY_SKIP_DIRS: .trivycache
+    TRIVY_NO_PROGRESS: "true"
+  cache:
+    key: trivy-db
+    paths: [.trivycache/]
+  artifacts:
+    when: always
+    paths: [trivy-*.json]
+    reports:
+      junit: trivy-*-junit.xml
+    expire_in: 30 days
+
+# ------------------------------------------------------------------ test
+tests:
+  stage: test
+  image: node:${NODE_VERSION}-alpine
+  parallel:
+    matrix:
+      # Version minimale supportée (package.json « engines ») et version de l'image Docker
+      - NODE_VERSION: ["22.13", "24.22.2"]
+  script:
+    - for f in server/*.js public/*.js test/*.js; do node --check "$f"; done
+    - npm test
+
+# ------------------------------------------------------------------ build
+# Le runner Docker n'est pas privilégié (pas de Docker-in-Docker) : l'image est construite avec
+# kaniko (fork maintenu osscontainertools), entièrement en espace utilisateur.
+docker-build:
+  stage: build
+  needs: [tests]
+  image:
+    name: ghcr.io/osscontainertools/kaniko:v1.29.0-debug
+    entrypoint: [""]
+  script:
+    # Identifiants du registre (DOCKER_CONFIG=/kaniko/.docker dans l'image kaniko)
+    - mkdir -p /kaniko/.docker
+    - AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > /kaniko/.docker/config.json
+    - >
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$IMAGE"
+      --cache=true
+      --cache-repo "$CI_REGISTRY_IMAGE/cache"
+      --label org.opencontainers.image.source="$CI_PROJECT_URL"
+      --label org.opencontainers.image.revision="$CI_COMMIT_SHA"
+      --label org.opencontainers.image.created="$CI_PIPELINE_CREATED_AT"
+
+# ------------------------------------------------------------------ scan
+# Démarre l'image construite et vérifie l'API (équivalent du job « Image Docker » de la CI GitHub).
+smoke-test:
+  stage: scan
+  needs: [docker-build]
+  image: $IMAGE
+  variables:
+    GIT_STRATEGY: none
+    DATA_DIR: /tmp/bernard-data
+  script:
+    - cd /app
+    - node server/index.js > /tmp/bernard.log 2>&1 &
+    - for i in $(seq 30); do wget -qO- http://127.0.0.1:3000/api/health && break; sleep 1; done
+    - wget -qO /dev/null http://127.0.0.1:3000/api/state
+    - node server/reset-password.js
+    - kill -0 $!  # le serveur tourne toujours
+  after_script:
+    - cat /tmp/bernard.log || true
+
+# Image : vulnérabilités (paquets Alpine, Node, npm) et secrets.
+trivy-image:
+  extends: .trivy
+  stage: scan
+  needs: [docker-build]
+  variables:
+    GIT_STRATEGY: none
+    TRIVY_USERNAME: $CI_REGISTRY_USER
+    TRIVY_PASSWORD: $CI_REGISTRY_PASSWORD
+    TRIVY_SCANNERS: vuln,secret
+  script:
+    # Rapport complet (toutes sévérités), affiché dans l'onglet Tests du pipeline et de la MR
+    - trivy image --exit-code 0 --format template --template "@/contrib/junit.tpl" --output trivy-image-junit.xml "$IMAGE"
+    - trivy image --exit-code 0 --format json --output trivy-image.json "$IMAGE"
+    # Échec sur HIGH / CRITICAL ayant un correctif disponible (exceptions justifiées dans .trivyignore)
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE"
+
+# Dépôt : Dockerfile / compose (misconfig), dépendances et secrets.
+trivy-repo:
+  extends: .trivy
+  stage: scan
+  needs: []
+  variables:
+    TRIVY_SCANNERS: vuln,secret,misconfig
+  script:
+    - trivy fs --exit-code 0 --format template --template "@/contrib/junit.tpl" --output trivy-repo-junit.xml .
+    - trivy fs --exit-code 0 --format json --output trivy-repo.json .
+    - trivy fs --exit-code 1 --severity HIGH,CRITICAL .
+
+# ------------------------------------------------------------------ release
+# Ré-étiquette l'image déjà analysée et testée (aucune reconstruction).
+docker-release:
+  stage: release
+  needs: [smoke-test, trivy-image, trivy-repo]
+  image:
+    name: ghcr.io/regclient/regctl:v0.11.7-alpine
+    entrypoint: [""]
+  rules:
+    - if: $CI_COMMIT_TAG
+      variables:
+        RELEASE_TAG: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        RELEASE_TAG: latest
+  interruptible: false
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | regctl registry login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --pass-stdin
+    - regctl image copy "$IMAGE" "$CI_REGISTRY_IMAGE:$RELEASE_TAG"

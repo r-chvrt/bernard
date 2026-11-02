@@ -314,6 +314,11 @@ npm test
   majeure de Node (nouvelle LTS) restent manuelles : elles demandent de vérifier `node:sqlite`.
 - **Intégration continue** (`.github/workflows/ci.yml`) : tests sur Node 22.13 (minimum supporté) et Node 24,
   puis construction de l’image, démarrage et contrôle de santé. Chaque PR Dependabot est donc testée automatiquement.
+- **GitLab CI** (`.gitlab-ci.yml`, instance gitlab.rilaun.fr) : mêmes tests, puis construction de l’image (kaniko, runner non privilégié) poussée
+  dans le registre du projet (`registry…/cr/bernard:<sha>`), contrôle de santé du conteneur et analyse **Trivy**
+  (image : vulnérabilités et secrets ; dépôt : Dockerfile, compose, secrets). Le job échoue sur une faille HIGH ou
+  CRITICAL corrigeable (exceptions justifiées dans `.trivyignore`). Les rapports sont dans l’onglet Tests de la MR.
+  Si tout passe, l’image est ré-étiquetée `:latest` (branche par défaut) ou `:<tag git>` (tags).
 - **Modèles** d’issue et de PR, politique de sécurité (`SECURITY.md`), journal des versions (`CHANGELOG.md`)
   et feuille de route (`ROADMAP.md`).
 
