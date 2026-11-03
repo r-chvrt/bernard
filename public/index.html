@@ -194,6 +194,13 @@
               <button type="button" class="btn btn-ghost danger-text" data-action="auth-off" id="auth-off-btn" hidden>Désactiver…</button>
             </div>
           </div>
+          <div class="admin-item">
+            <div><strong>Clé d’API</strong><small id="api-key-status">Aucune clé : l’API externe (lecture du stock) est désactivée.</small></div>
+            <div class="admin-actions">
+              <button type="button" class="btn" data-action="api-key-create" id="api-key-create-btn"><svg aria-hidden="true"><use href="#i-lock"/></svg> Générer…</button>
+              <button type="button" class="btn btn-ghost danger-text" data-action="api-key-revoke" id="api-key-revoke-btn" hidden>Révoquer…</button>
+            </div>
+          </div>
           <div class="admin-item" id="demo-item">
             <div><strong>Données d’exemple</strong><small>Pour découvrir l’application (stock vide uniquement).</small></div>
             <button type="button" class="btn" data-action="demo">Charger</button>
@@ -348,6 +355,24 @@
       <footer class="dialog-foot">
         <button type="button" class="btn btn-ghost" data-close>Annuler</button>
         <button type="submit" class="btn btn-primary" id="ad-submit">Enregistrer</button>
+      </footer>
+    </form>
+  </dialog>
+
+ <!-- Clé d'API (affichée une seule fois) -->
+  <dialog id="api-key-dialog" aria-labelledby="ak-title">
+    <form method="dialog">
+      <header class="dialog-head"><h2 id="ak-title">Nouvelle clé d’API</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Fermer"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+      <div class="dialog-body">
+        <p class="hint">Copiez-la maintenant : elle ne sera plus jamais affichée. Elle donne accès en lecture au stock via
+          <code>GET /api/v1/stock</code> avec l’en-tête <code>Authorization: Bearer &lt;clé&gt;</code>.</p>
+        <label class="field"><span>Clé</span>
+          <input id="ak-value" type="text" readonly spellcheck="false" autocomplete="off" class="mono"></label>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn btn-ghost" data-action="api-key-copy">Copier</button>
+        <button type="submit" class="btn btn-primary">J’ai copié la clé</button>
       </footer>
     </form>
   </dialog>

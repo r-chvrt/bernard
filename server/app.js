@@ -12,6 +12,8 @@ import { loadDemo } from './demo.js';
 import {
   authEnabled, currentSession, startSession, endSession, setPassword, clearPassword, verifyPassword, createLimiter,
 } from './auth.js';
+import { createApiKey, revokeApiKey, presentedKey, checkApiKey } from './api-key.js';
+import { buildStock } from './stock-api.js';
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -88,10 +90,11 @@ function findTwin(db, p, excludeId = 0) {
 
 const routes = [];
 // `open: true` : route accessible sans être connecté quand le mot de passe est activé.
-const route = (method, path, handler, { maxBody = 100_000, open = false } = {}) => {
+// `apiKey: true` : route de l'API externe, accessible uniquement avec la clé d'API (jamais par la session).
+const route = (method, path, handler, { maxBody = 100_000, open = false, apiKey = false } = {}) => {
   const keys = [];
   const re = new RegExp(`^${path.replace(/:(\w+)/g, (_, k) => (keys.push(k), '(\\d+)'))}$`);
-  routes.push({ method, re, keys, handler, maxBody, open });
+  routes.push({ method, re, keys, handler, maxBody, open, apiKey });
 };
 /** Valeur renvoyée par un gestionnaire qui a déjà écrit la réponse lui-même. */
 const SENT = Symbol('sent');
@@ -161,6 +164,28 @@ route('DELETE', '/api/auth', ({ db, body, req, res }) => {
   return { settings: publicSettings(getSettings(db)) };
 });
 route('GET', '/api/state', ({ db }) => state(db));
+
+/* Clé d'API (applications externes) : la clé en clair n'est renvoyée qu'à la création. */
+
+route('POST', '/api/api-key', ({ db }) => {
+  const key = createApiKey(db);
+  return { key, settings: publicSettings(getSettings(db)) };
+});
+
+route('DELETE', '/api/api-key', ({ db }) => {
+  revokeApiKey(db);
+  return { settings: publicSettings(getSettings(db)) };
+});
+
+/* API externe v1 (lecture seule, clé d'API obligatoire) */
+
+route('GET', '/api/v1/stock', ({ db }) => {
+  const settings = getSettings(db);
+  const timezone = isValidTimeZone(settings.timezone) ? settings.timezone : 'UTC';
+  return buildStock({
+    products: listProducts(db), spaces: listSpaces(db), settings, today: localParts(timezone).date, timezone,
+  });
+}, { apiKey: true });
 
 /* Espaces */
 
@@ -508,6 +533,22 @@ async function readBody(req, maxBody) {
 
 export function createApp({ db, publicDir, log = console }) {
   const limiter = createLimiter();
+  const apiKeyLimiter = createLimiter();
+
+  /** Contrôle de la clé d'API (mêmes paliers d'attente que la connexion après 5 échecs). */
+  function requireApiKey(req) {
+    const ip = req.socket.remoteAddress || '?';
+    const wait = apiKeyLimiter.check(ip);
+    if (wait) throw new HttpError(429, `Trop de tentatives : réessayez dans ${wait} s`);
+    if (!getSettings(db).api_key_hash) throw new HttpError(401, 'API désactivée : générez une clé dans Paramètres → Administration');
+    const key = presentedKey(req);
+    if (!key) throw new HttpError(401, "Clé d'API manquante (en-tête Authorization: Bearer <clé> ou X-API-Key)");
+    if (!checkApiKey(db, key)) {
+      apiKeyLimiter.fail(ip);
+      throw new HttpError(401, "Clé d'API invalide");
+    }
+    apiKeyLimiter.success(ip);
+  }
 
   async function serveStatic(req, res, pathname, loggedIn) {
     let rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
@@ -548,7 +589,8 @@ export function createApp({ db, publicDir, log = console }) {
       for (const r of routes) {
         const m = r.method === req.method && url.pathname.match(r.re);
         if (!m) continue;
-        if (!loggedIn && !r.open) {
+        if (r.apiKey) requireApiKey(req);
+        else if (!loggedIn && !r.open) {
           return sendJson(res, 401, { error: 'Connexion requise', auth_required: true });
         }
         const params = Object.fromEntries(r.keys.map((k, i) => [k, Number(m[i + 1])]));

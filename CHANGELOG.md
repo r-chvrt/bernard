@@ -6,6 +6,9 @@ Les migrations de base de données sont automatiques au démarrage.
 ## [Non publié]
 
 ### Ajouté
+- **Clé d’API** (Paramètres → Administration) et **API externe en lecture seule** `GET /api/v1/stock` : aliments
+  regroupés et quantités disponibles (estimation des produits entamés, péremption), pour des applications comme Lulu.
+  La clé n’est affichée qu’à sa création (empreinte SHA-256 seule conservée), essais invalides ralentis.
 - GitLab CI : tests Node 22.13 et 24, image Docker poussée dans le registre GitLab, contrôle de santé et analyse Trivy
   (image et dépôt) ; publication de `:latest` et des tags après analyse.
 
