@@ -204,6 +204,7 @@ Dans **Paramètres** : ajouter, renommer, réordonner (flèches) ou supprimer. S
 - **Importer…** lit un export puis propose : **Ajouter au stock actuel** (les espaces manquants sont créés) ou **Remplacer tout** (produits, espaces, historique et réglages ; le webhook en place est conservé). Le fichier est vérifié entièrement avant tout changement : en cas d’erreur, rien n’est modifié et le produit fautif est indiqué.
 - **Purger…** propose **Vider le stock** (espaces, réglages et suggestions conservés) ou **Tout réinitialiser** (y compris le webhook et le mot de passe). Il faut taper `PURGER` pour confirmer.
 - **Mot de passe d’accès** : voir ci-dessous.
+- **Clé d’API** : donne à une application externe (ex. Lulu) un accès **en lecture seule** au stock, voir « 8. API ».
 
 ### Mot de passe
 Dans **Paramètres → Administration → Mot de passe d’accès → Activer…**, choisissez un mot de passe (6 caractères minimum). Il n’y a ni identifiant ni compte : tout le foyer partage ce mot de passe.
@@ -337,6 +338,39 @@ npm test
 | POST | `/api/notifications/test` · `/send` | Tester le webhook · envoyer le récapitulatif |
 | POST | `/api/login` · `/api/logout` | Connexion · déconnexion |
 | PUT · DELETE | `/api/auth` | Définir/modifier · désactiver le mot de passe (`current_password` exigé s’il existe) |
+| POST · DELETE | `/api/api-key` | Générer (ou régénérer) · révoquer la clé d’API ; la clé n’est renvoyée qu’à la création |
+| GET | `/api/v1/stock` | **API externe** : aliments et quantités disponibles (clé d’API obligatoire) |
 | GET | `/api/health` | Contrôle de santé (utilisé par Docker) |
 
 Les requêtes d’écriture doivent être envoyées en `application/json`.
+
+### API externe (v1, lecture seule)
+
+Destinée aux autres applications du foyer (ex. **Lulu**, suggestions de recettes).
+
+1. **Paramètres → Administration → Clé d’API → Générer…** : la clé (`brn_…`) n’est affichée **qu’une fois** ; seule son
+   empreinte SHA-256 est conservée. **Régénérer…** invalide immédiatement l’ancienne, **Révoquer…** ferme l’API.
+2. Appel : en-tête `Authorization: Bearer <clé>` (ou `X-API-Key: <clé>`) :
+
+```bash
+curl -H "Authorization: Bearer brn_…" https://bernard.example/api/v1/stock
+```
+
+- Les routes `/api/v1/*` exigent **toujours** la clé, que le mot de passe soit activé ou non ; la session du navigateur
+  n’y donne pas accès, et la clé n’ouvre aucune autre route. Sans clé générée, elles répondent `401`.
+- Après 5 clés invalides depuis la même adresse : `429`, puis attente croissante (comme la connexion).
+- La clé ne protège que l’API externe : pour fermer le reste de l’application, activez aussi le mot de passe.
+
+Réponse de `GET /api/v1/stock` :
+
+- `today`, `timezone`, `expiry_days` (seuil « bientôt périmé » des réglages), `generated_at`, `version: 1`.
+- `foods` : un élément par **aliment** (même nom sans tenir compte de la casse, même unité), trié par péremption la plus
+  proche (à cuisiner en priorité) : `name`, `category`, `category_label`, `unit`, `unit_label`, `quantity`,
+  `estimated_quantity`, `open_quantity`, `closed_quantity`, `spaces`, `next_expiry`, `days_left`,
+  `expiry_status` (`expired` · `expiring` · `ok` · `unknown` = sans date), `item_ids`.
+- `items` : le détail de chaque entrée du stock (`id`, `name`, `category`, `space`, `quantity`, `unit`, `state`,
+  `remaining`, `opened_on`, `expires_on`, `days_left`, `expiry_status`, `estimated_quantity`).
+
+`estimated_quantity` tient compte du reste indiqué sur les produits ouverts (1 bouteille ouverte à ½ → 0,5) ;
+sans niveau indiqué, la quantité entière est comptée. Les produits périmés sont inclus (`expiry_status: "expired"`) :
+à l’application cliente de décider de les écarter.

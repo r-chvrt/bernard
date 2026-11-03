@@ -630,3 +630,6 @@ dialog form { display: flex; flex-direction: column; max-height: calc(100dvh - 2
 .login-help { font-size: 0.8rem; color: var(--muted); margin: 6px 0 0; }
 
 .admin-item .admin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Clé d’API */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9rem; }

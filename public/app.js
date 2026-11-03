@@ -1001,7 +1001,47 @@ function renderSettings() {
     : 'Désactivé : l’application est ouverte à tous sur le réseau.';
   $('#auth-set-btn').lastChild.textContent = st.auth_enabled ? ' Modifier…' : ' Activer…';
   $('#auth-off-btn').hidden = !st.auth_enabled;
+  const fmtDate = (iso) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+  $('#api-key-status').textContent = st.api_key_enabled
+    ? `Active (${st.api_key_hint}), créée le ${fmtDate(st.api_key_created_at)} — ${st.api_key_last_used_at ? `dernier appel le ${fmtDate(st.api_key_last_used_at)}` : 'jamais utilisée'}.`
+    : 'Aucune clé : l’API externe (lecture du stock) est désactivée.';
+  $('#api-key-create-btn').lastChild.textContent = st.api_key_enabled ? ' Régénérer…' : ' Générer…';
+  $('#api-key-revoke-btn').hidden = !st.api_key_enabled;
 }
+
+/* ----- Clé d'API ----- */
+
+async function createApiKey() {
+  if (S.settings.api_key_enabled) {
+    const ok = await confirmDialog({
+      title: 'Régénérer la clé d’API',
+      html: '<p>L’ancienne clé cessera immédiatement de fonctionner : les applications qui l’utilisent devront recevoir la nouvelle.</p>',
+      ok: 'Régénérer',
+    });
+    if (!ok) return;
+  }
+  const res = await api('POST', '/api/api-key', {});
+  S.settings = res.settings;
+  render();
+  $('#ak-value').value = res.key;
+  $('#api-key-dialog').showModal();
+  $('#ak-value').select();
+}
+
+async function revokeApiKey() {
+  const ok = await confirmDialog({
+    title: 'Révoquer la clé d’API',
+    html: '<p>Les applications qui utilisent cette clé perdront l’accès au stock.</p>',
+    ok: 'Révoquer',
+  });
+  if (!ok) return;
+  const res = await api('DELETE', '/api/api-key', {});
+  S.settings = res.settings;
+  toast('Clé d’API révoquée');
+  render();
+}
+
+$('#api-key-dialog').addEventListener('close', () => { $('#ak-value').value = ''; });
 
 /* ----- Mot de passe d'accès ----- */
 
@@ -1282,6 +1322,25 @@ document.addEventListener('click', async (e) => {
   if (action === 'toggle-theme') return toggleTheme();
   if (action === 'auth-set') return openAuthDialog('set');
   if (action === 'auth-off') return openAuthDialog('off');
+  if (action === 'api-key-copy') {
+    const input = $('#ak-value');
+    input.select();
+    try {
+      await navigator.clipboard.writeText(input.value);
+      toast('Clé copiée');
+    } catch {
+      toast('Copie impossible : sélectionnez la clé et copiez-la à la main', { error: true });
+    }
+    return;
+  }
+  if (action === 'api-key-create' || action === 'api-key-revoke') {
+    try {
+      await (action === 'api-key-create' ? createApiKey() : revokeApiKey());
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+    return;
+  }
   if (action === 'logout') {
     await api('POST', '/api/logout', {}).catch(() => {});
     location.replace('/');

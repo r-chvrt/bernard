@@ -133,10 +133,11 @@ export function webhookUrl(settings) {
 
 /** Paramètres renvoyés au navigateur : l'URL du webhook n'en sort jamais. */
 export function publicSettings(settings) {
-  const { webhook_url, auth_password, ...rest } = settings;
+  const { webhook_url, auth_password, api_key_hash, ...rest } = settings;
   return {
     ...rest,
     auth_enabled: Boolean(auth_password),
+    api_key_enabled: Boolean(api_key_hash),
     webhook_configured: Boolean(webhookUrl(settings)),
     webhook_from_env: Boolean(process.env.DISCORD_WEBHOOK_URL),
   };
