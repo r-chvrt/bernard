@@ -346,7 +346,7 @@ Les requêtes d’écriture doivent être envoyées en `application/json`.
 
 ### API externe (v1, lecture seule)
 
-Destinée aux autres applications du foyer (ex. **Lulu**, suggestions de recettes).
+Destinée aux autres applications du foyer (ex. **Lulu**, suggestions de recettes). Le [contrat détaillé de l’API v1](docs/api-v1.md) décrit les champs, les erreurs et les limites de compatibilité.
 
 1. **Paramètres → Administration → Clé d’API → Générer…** : la clé (`brn_…`) n’est affichée **qu’une fois** ; seule son
    empreinte SHA-256 est conservée. **Régénérer…** invalide immédiatement l’ancienne, **Révoquer…** ferme l’API.
