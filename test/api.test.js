@@ -53,6 +53,41 @@ test('ajout avec les seuls champs obligatoires et validation', async () => {
   assert.ok((await state()).history.some((h) => h.name === 'Pâtes'));
 });
 
+test('erreurs de validation du nom : code stable, paramètres et message français', async () => {
+  const { spaces } = await state();
+  const body = { name: '', space_id: spaces[0].id, quantity: 1, state: 'closed' };
+  assert.deepEqual(await call('POST', '/api/products', body), {
+    status: 400, data: { error: 'Le nom est obligatoire', code: 'name_required' },
+  });
+  assert.deepEqual(await call('POST', '/api/products', { ...body, name: 'x'.repeat(81) }), {
+    status: 400, data: { error: 'Le nom ne doit pas dépasser 80 caractères', code: 'name_too_long', params: { max: 80 } },
+  });
+});
+
+test('le code de longueur porte la limite propre aux espaces', async () => {
+  assert.deepEqual(await call('POST', '/api/spaces', { name: 'x'.repeat(41) }), {
+    status: 400, data: { error: 'Le nom ne doit pas dépasser 40 caractères', code: 'name_too_long', params: { max: 40 } },
+  });
+});
+
+test('erreurs du formulaire produit identifiables sans interpréter le français', async () => {
+  const { spaces } = await state();
+  const body = { name: 'Riz', space_id: spaces[0].id, quantity: 1, state: 'open' };
+  const cases = [
+    [{ quantity: 0 }, 'quantity_positive', 'La quantité doit être supérieure à 0'],
+    [{ quantity: 100001 }, 'quantity_too_large', 'Quantité trop grande'],
+    [{ expires_on: '2026-02-30' }, 'expiry_date_invalid', 'Date de péremption invalide'],
+    [{ opened_on: '2026-02-30' }, 'opened_date_invalid', "Date d'ouverture invalide"],
+    [{ remaining: 0 }, 'remaining_invalid', 'Le reste doit être un pourcentage entre 1 et 100'],
+    [{ space_id: 999999 }, 'space_unknown', 'Espace de rangement inconnu'],
+    [{ unit: 'unknown' }, 'unit_unknown', 'Unité inconnue'],
+    [{ state: 'unknown' }, 'state_invalid', "L'état doit être « ouvert » ou « fermé »"],
+  ];
+  for (const [change, code, error] of cases) {
+    assert.deepEqual(await call('POST', '/api/products', { ...body, ...change }), { status: 400, data: { error, code } });
+  }
+});
+
 test('ouvrir une partie du stock fermé (fusion avec l’entrée ouverte existante)', async () => {
   const { spaces } = await state();
   const placard = spaces[0].id;

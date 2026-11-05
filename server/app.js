@@ -16,33 +16,35 @@ import { createApiKey, revokeApiKey, presentedKey, checkApiKey } from './api-key
 import { buildStock } from './stock-api.js';
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code, params) {
     super(message);
     this.status = status;
+    this.code = code;
+    this.params = params;
   }
 }
-const bad = (message) => new HttpError(400, message);
+const bad = (message, code, params) => new HttpError(400, message, code, params);
 const notFound = (message = 'Introuvable') => new HttpError(404, message);
 
 /* ---------- Validation ---------- */
 
 const cleanName = (v, max = 80) => {
   const s = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '';
-  if (!s) throw bad('Le nom est obligatoire');
-  if (s.length > max) throw bad(`Le nom ne doit pas dépasser ${max} caractères`);
+  if (!s) throw bad('Le nom est obligatoire', 'name_required');
+  if (s.length > max) throw bad(`Le nom ne doit pas dépasser ${max} caractères`, 'name_too_long', { max });
   return s;
 };
 
 const cleanQuantity = (v) => {
   const n = typeof v === 'string' ? Number(v.replace(',', '.')) : v;
-  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) throw bad('La quantité doit être supérieure à 0');
-  if (n > 100000) throw bad('Quantité trop grande');
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) throw bad('La quantité doit être supérieure à 0', 'quantity_positive');
+  if (n > 100000) throw bad('Quantité trop grande', 'quantity_too_large');
   return Math.round(n * 1000) / 1000;
 };
 
-const cleanDate = (v, label) => {
+const cleanDate = (v, label, code) => {
   if (v === null || v === undefined || v === '') return null;
-  if (!isValidDate(v)) throw bad(`${label} invalide`);
+  if (!isValidDate(v)) throw bad(`${label} invalide`, code);
   return v;
 };
 
@@ -54,19 +56,19 @@ function cleanProduct(db, body, current = {}) {
     quantity: cleanQuantity(p.quantity),
     unit: p.unit || 'unité',
     state: p.state,
-    expires_on: cleanDate(p.expires_on, 'Date de péremption'),
-    opened_on: cleanDate(p.opened_on, "Date d'ouverture"),
+    expires_on: cleanDate(p.expires_on, 'Date de péremption', 'expiry_date_invalid'),
+    opened_on: cleanDate(p.opened_on, "Date d'ouverture", 'opened_date_invalid'),
     category: CATEGORY_IDS.has(p.category) ? p.category : guessCategory(p.name),
     remaining: p.remaining === undefined || p.remaining === null || p.remaining === '' ? null : Number(p.remaining),
   };
   if (out.remaining !== null && (!Number.isInteger(out.remaining) || out.remaining < 1 || out.remaining > 100)) {
-    throw bad('Le reste doit être un pourcentage entre 1 et 100');
+    throw bad('Le reste doit être un pourcentage entre 1 et 100', 'remaining_invalid');
   }
   // Un produit entamé n'est pas « plein » : 100 % (anciens exports) équivaut à « non indiqué ».
   if (out.remaining === 100) out.remaining = null;
-  if (!db.prepare('SELECT 1 FROM spaces WHERE id = ?').get(out.space_id)) throw bad('Espace de rangement inconnu');
-  if (!UNIT_IDS.has(out.unit)) throw bad('Unité inconnue');
-  if (out.state !== 'open' && out.state !== 'closed') throw bad("L'état doit être « ouvert » ou « fermé »");
+  if (!db.prepare('SELECT 1 FROM spaces WHERE id = ?').get(out.space_id)) throw bad('Espace de rangement inconnu', 'space_unknown');
+  if (!UNIT_IDS.has(out.unit)) throw bad('Unité inconnue', 'unit_unknown');
+  if (out.state !== 'open' && out.state !== 'closed') throw bad("L'état doit être « ouvert » ou « fermé »", 'state_invalid');
   if (out.state === 'closed') {
     out.opened_on = null;
     out.remaining = null;
@@ -292,7 +294,7 @@ route('POST', '/api/products/:id/open', ({ db, params, body }) => {
   if (src.state !== 'closed') throw bad('Ce produit est déjà ouvert');
   const qty = cleanQuantity(body.quantity ?? Math.min(1, src.quantity));
   if (qty > src.quantity + 1e-9) throw bad(`Il n'y a que ${src.quantity} ${src.unit} en stock`);
-  const opened_on = cleanDate(body.opened_on, "Date d'ouverture");
+  const opened_on = cleanDate(body.opened_on, "Date d'ouverture", 'opened_date_invalid');
 
   return transaction(db, () => {
     const ts = now();
@@ -601,7 +603,9 @@ export function createApp({ db, publicDir, log = console }) {
       }
       throw notFound('Route inconnue');
     } catch (err) {
-      if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message });
+      if (err instanceof HttpError) return sendJson(res, err.status, {
+        error: err.message, ...(err.code && { code: err.code }), ...(err.params && { params: err.params }),
+      });
       if (err instanceof WebhookError) return sendJson(res, 502, { error: err.message });
       log.error?.(`[erreur] ${req.method} ${url.pathname} : ${err?.message}`);
       return sendJson(res, 500, { error: 'Erreur interne du serveur' });
