@@ -123,7 +123,13 @@ export function buildDigest(alerts, spaces, today) {
   };
 }
 
-export class WebhookError extends Error {}
+export class WebhookError extends Error {
+  constructor(message, code, params) {
+    super(message);
+    this.code = code;
+    this.params = params;
+  }
+}
 
 /** Envoie un message au webhook. Les erreurs ne contiennent jamais l'URL. */
 export async function sendWebhook(url, payload, { fetchImpl = fetch, retry = true } = {}) {
@@ -136,7 +142,9 @@ export async function sendWebhook(url, payload, { fetchImpl = fetch, retry = tru
       signal: AbortSignal.timeout(10000),
     });
   } catch (err) {
-    throw new WebhookError(err?.name === 'TimeoutError' ? 'Discord ne répond pas (délai dépassé)' : 'Impossible de joindre Discord');
+    throw err?.name === 'TimeoutError'
+      ? new WebhookError('Discord ne répond pas (délai dépassé)', 'webhook_timeout')
+      : new WebhookError('Impossible de joindre Discord', 'webhook_unreachable');
   }
   if (res.status === 429 && retry) {
     const body = await res.json().catch(() => ({}));
@@ -144,8 +152,8 @@ export async function sendWebhook(url, payload, { fetchImpl = fetch, retry = tru
     await new Promise((r) => setTimeout(r, wait * 1000));
     return sendWebhook(url, payload, { fetchImpl, retry: false });
   }
-  if (res.status === 401 || res.status === 404) throw new WebhookError('Webhook introuvable ou révoqué (vérifiez l’URL)');
-  if (!res.ok) throw new WebhookError(`Discord a refusé le message (HTTP ${res.status})`);
+  if (res.status === 401 || res.status === 404) throw new WebhookError('Webhook introuvable ou révoqué (vérifiez l’URL)', 'webhook_not_found');
+  if (!res.ok) throw new WebhookError(`Discord a refusé le message (HTTP ${res.status})`, 'webhook_rejected', { status: res.status });
 }
 
 /** Calcule les alertes du jour à partir de la base. */
@@ -159,28 +167,30 @@ export function currentAlerts(db, at = new Date()) {
 
 /**
  * Envoi du récapitulatif. `force` ignore la règle « ne pas renvoyer un message identique ».
- * Renvoie { sent, count, reason }.
+ * Renvoie { sent, count, reason, reason_code } (reason : texte français historique, reason_code : code stable).
+ * Le dernier traitement est mémorisé en texte (last_digest_status) et en code (last_digest_code, last_digest_params).
  */
 export async function runDigest(db, { at = new Date(), force = false, fetchImpl } = {}) {
   const { settings, today, alerts, spaces } = currentAlerts(db, at);
   const url = webhookUrl(settings);
-  if (!url) return { sent: false, count: 0, reason: 'Aucun webhook configuré' };
+  if (!url) return { sent: false, count: 0, reason: 'Aucun webhook configuré', reason_code: 'no_webhook' };
   const count = alertCount(alerts);
   const signature = alertSignature(alerts);
-  const status = (message) =>
-    setSettings(db, { last_digest_at: at.toISOString(), last_digest_status: message });
+  const status = (message, code, params = {}) => setSettings(db, {
+    last_digest_at: at.toISOString(), last_digest_status: message, last_digest_code: code, last_digest_params: params,
+  });
 
   if (count === 0) {
-    status('Rien à signaler');
-    return { sent: false, count, reason: 'Aucun produit à signaler' };
+    status('Rien à signaler', 'nothing_to_report');
+    return { sent: false, count, reason: 'Aucun produit à signaler', reason_code: 'nothing_to_report' };
   }
   if (!force && settings.skip_unchanged && settings.last_digest_signature === signature) {
-    status('Message identique au précédent : non renvoyé');
-    return { sent: false, count, reason: 'Message identique au précédent' };
+    status('Message identique au précédent : non renvoyé', 'unchanged');
+    return { sent: false, count, reason: 'Message identique au précédent', reason_code: 'unchanged' };
   }
   await sendWebhook(url, buildDigest(alerts, spaces, today), { fetchImpl });
   setSettings(db, { last_digest_signature: signature });
-  status(`${count} ${plural(count, 'alerte envoyée', 'alertes envoyées')}`);
+  status(`${count} ${plural(count, 'alerte envoyée', 'alertes envoyées')}`, 'sent', { count });
   return { sent: true, count };
 }
 
@@ -212,7 +222,10 @@ export function createScheduler(db, { log = console, intervalMs = 60000, fetchIm
     } catch (err) {
       // Nouvel essai dans 15 minutes (le message d'erreur ne contient pas l'URL).
       retryAfter = Date.now() + 15 * 60000;
-      setSettings(db, { last_digest_at: at.toISOString(), last_digest_status: `Échec : ${err.message}` });
+      setSettings(db, {
+        last_digest_at: at.toISOString(), last_digest_status: `Échec : ${err.message}`,
+        last_digest_code: 'failed', last_digest_params: { reason: err.message, ...(err.code && { reason_code: err.code }), ...(err.params && { reason_params: err.params }) },
+      });
       log.warn?.(`[alertes] échec de l'envoi : ${err.message}`);
     } finally {
       running = false;

@@ -1,7 +1,16 @@
-'use strict';
+import { errorMessage, initI18n, onLangChange, setLang, storedLang, t } from './i18n.js';
+
 const form = document.getElementById('login-form');
 const error = form.querySelector('.form-error');
 const button = form.querySelector('button[type="submit"]');
+const langSelect = document.getElementById('lang-select');
+
+const syncTitle = () => { document.title = t('login.title'); };
+initI18n();
+syncTitle();
+onLangChange(syncTitle);
+langSelect.value = storedLang() ?? '';
+langSelect.addEventListener('change', () => setLang(langSelect.value || null));
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -18,7 +27,7 @@ form.addEventListener('submit', async (e) => {
       return;
     }
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Connexion impossible');
+    throw new Error((data.error || data.code) ? errorMessage(data) : t('login.failed'));
   } catch (err) {
     error.textContent = err.message;
     error.hidden = false;

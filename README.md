@@ -40,8 +40,11 @@ server/
   backup.js    sauvegarde à chaud de la base
 public/
   index.html, app.css, app.js   interface
+  login.html, login.js          page de connexion
+  i18n.js, i18n/fr.js, en.js    traduction de l’interface (français, anglais)
   catalog.js                    catégories, ~200 produits génériques, déduction de catégorie
                                 (module partagé par le navigateur et le serveur)
+docs/          contrat de l’API v1, codes d’erreur et traduction
 test/          tests automatisés (node --test)
 ```
 
@@ -246,7 +249,8 @@ de nouveau à l’application sans mot de passe.
 ### Apparence
 - Le bouton **lune / soleil** en haut bascule entre thème clair et sombre. Le thème **clair** est utilisé par défaut, quel que soit le réglage du système.
 - Sur ordinateur, la **pastille de couleur** à côté permet de choisir la couleur d’accentuation parmi 9 teintes.
-- Ces deux choix sont mémorisés **sur chaque appareil** (navigateur).
+- Le bouton **FR / EN** choisit la langue de l’interface (français ou anglais), aussi réglable dans **Paramètres → Langue** et sur la page de connexion. Par défaut (« Automatique »), Bernard suit la langue du navigateur, et le français sinon.
+- Ces choix sont mémorisés **sur chaque appareil** (navigateur). Les noms de produits et d’espaces, les suggestions de saisie et les messages Discord restent tels quels (en français pour ceux fournis par Bernard).
 
 L’export JSON complète la sauvegarde du fichier SQLite décrite plus haut : il est pratique pour transférer le stock vers une autre installation.
 
@@ -342,7 +346,7 @@ npm test
 | GET | `/api/v1/stock` | **API externe** : aliments et quantités disponibles (clé d’API obligatoire) |
 | GET | `/api/health` | Contrôle de santé (utilisé par Docker) |
 
-Les requêtes d’écriture doivent être envoyées en `application/json`.
+Les requêtes d’écriture doivent être envoyées en `application/json`. Les erreurs renvoient `{ error, code, params }` : `error` est un texte français, `code` un identifiant stable traduit par l’interface (liste dans [`docs/erreurs-i18n.md`](docs/erreurs-i18n.md)) ; l’API externe v1 garde `{ error }`.
 
 ### API externe (v1, lecture seule)
 

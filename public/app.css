@@ -628,6 +628,12 @@ dialog form { display: flex; flex-direction: column; max-height: calc(100dvh - 2
 .login-card .field { margin: 0; }
 .login-card .form-error { margin: 0; }
 .login-help { font-size: 0.8rem; color: var(--muted); margin: 6px 0 0; }
+.login-lang select { min-height: 36px; font-size: 0.85rem; }
+
+/* ===== Langue ===== */
+/* Page non française : masquée jusqu'à la traduction (theme.js pose la classe, i18n.js la retire). */
+.i18n-pending body { visibility: hidden; }
+.lang-code { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; line-height: 1; }
 
 .admin-item .admin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 

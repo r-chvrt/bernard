@@ -1,4 +1,9 @@
 import { CATEGORIES, DICTIONARY, guessCategory, norm } from './catalog.js';
+import {
+  t, getLang, setLang, storedLang, initI18n, onLangChange, locale, errorMessage, unitName, LANGS, LANG_NAMES,
+} from './i18n.js';
+
+initI18n();
 
 /* ================= Utilitaires ================= */
 
@@ -7,17 +12,29 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const icon = (id) => `<svg aria-hidden="true"><use href="#i-${id}"/></svg>`;
-const numFmt = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 });
+// Formats dépendant de la langue, recréés au changement de langue.
+let numFmt;
+let inputFmt;
+function setFormats() {
+  numFmt = new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 });
+  // Champs de saisie : sans séparateur de milliers (relu par parseQty).
+  inputFmt = new Intl.NumberFormat(locale(), { maximumFractionDigits: 2, useGrouping: false });
+}
+setFormats();
 const round = (n) => Math.round(n * 1000) / 1000;
-const plural = (n, one, many) => (n > 1 ? many : one);
 
 function localToday() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
-const fmtDate = (s) => (s ? s.split('-').reverse().join('/') : '');
-const fmtDateShort = (s) => (s ? s.split('-').reverse().slice(0, 2).join('/') : '');
+// Dates AAAA-MM-JJ : JJ/MM/AAAA en français ; en anglais, mois en lettres (« 4 Nov 2026 ») pour éviter
+// l'ambiguïté jour/mois entre usages britannique et américain.
+const fmtDate = (s) => {
+  if (!s) return '';
+  if (getLang() === 'fr') return s.split('-').reverse().join('/');
+  return new Date(`${s}T00:00:00Z`).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+};
 
 function parseQty(v) {
   const n = Number(String(v).replace(',', '.').trim());
@@ -47,11 +64,12 @@ async function api(method, path, body) {
   if (res.status === 401 && data.auth_required) {
     // Session expirée ou mot de passe activé ailleurs : retour à la page de connexion.
     location.replace('/');
-    throw new Error('Connexion requise');
+    throw new Error(errorMessage(data));
   }
   if (!res.ok) {
-    const err = new Error(data.error || `Erreur ${res.status}`);
+    const err = new Error((data.error || data.code) ? errorMessage(data) : t('error.http', { status: res.status }));
     err.status = res.status;
+    err.code = data.code;
     throw err;
   }
   return data;
@@ -78,8 +96,15 @@ async function refresh() {
 
 const spaceName = (id) => S.spaces.find((s) => s.id === id)?.name ?? '—';
 const unitOf = (id) => S.units.find((u) => u.id === id) || { id, plural: id, step: 1 };
-const unitLabel = (unit, q) => (q > 1 ? unitOf(unit).plural : unit);
-const categoryOf = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES.at(-1);
+const unitLabel = (unit, q) => unitName(unit, q);
+/** Catégorie avec son libellé traduit (les identifiants et icônes viennent du catalogue partagé). */
+const categoryOf = (id) => {
+  const c = CATEGORIES.find((x) => x.id === id) || CATEGORIES.at(-1);
+  return { ...c, label: t(`category.${c.id}`) };
+};
+const levelLabel = (l) => t(`level.${l.value}`);
+const levelShort = (l) => t(`level.${l.value}.short`);
+const fmtDateTime = (iso, opts = { dateStyle: 'short', timeStyle: 'short' }) => new Date(iso).toLocaleString(locale(), opts);
 const qtyLabel = (p) => `${numFmt.format(p.quantity)} ${unitLabel(p.unit, p.quantity)}`;
 
 /** Indicateurs d'un produit (calculés avec les seuils des paramètres). */
@@ -116,14 +141,14 @@ function toast(message, { error = false, action, onAction, duration = 5000 } = {
   while (box.children.length > 3) box.firstElementChild.remove();
   setTimeout(() => el.remove(), action ? Math.max(duration, 7000) : duration);
 }
-const fail = (err) => toast(err.message || 'Une erreur est survenue', { error: true });
+const fail = (err) => toast(err.message || t('error.generic'), { error: true });
 
 /* ================= Navigation ================= */
 
 const VIEWS = {
   '#/': 'all', '': 'all', '#/ouverts': 'open', '#/fermes': 'closed', '#/parametres': 'settings',
 };
-const TITLES = { all: 'Tout le stock', open: 'Produits ouverts', closed: 'Produits fermés' };
+const title = (view) => t(`view.${view}`);
 
 function onRoute() {
   UI.view = VIEWS[location.hash] || 'all';
@@ -146,7 +171,7 @@ function render() {
   const settings = UI.view === 'settings';
   $('#view-list').hidden = settings;
   $('#view-settings').hidden = !settings;
-  document.title = `${settings ? 'Paramètres' : TITLES[UI.view]} · Bernard`;
+  document.title = `${title(UI.view)} · Bernard`;
   if (settings) renderSettings();
   else renderList();
 }
@@ -154,22 +179,11 @@ function render() {
 /* ================= Vues produits ================= */
 
 const EXPIRY_FILTERS = [
-  { id: '', label: 'Toutes les dates' },
-  { id: 'expired', label: 'Périmés' },
-  { id: 'soon', label: 'Bientôt périmés' },
-  { id: 'alert', label: 'Périmés ou bientôt' },
-  { id: 'openlong', label: 'Ouverts depuis longtemps', notIn: 'closed' },
-  { id: 'dated', label: 'Avec date de péremption' },
-  { id: 'undated', label: 'Sans date de péremption' },
+  { id: '' }, { id: 'expired' }, { id: 'soon' }, { id: 'alert' }, { id: 'openlong', notIn: 'closed' }, { id: 'dated' }, { id: 'undated' },
 ];
-const SORTS = [
-  { id: 'expiry', label: 'Péremption proche' },
-  { id: 'name', label: 'Nom (A → Z)' },
-  { id: 'category', label: 'Catégorie' },
-  { id: 'space', label: 'Espace' },
-  { id: 'opened', label: 'Ouverture la plus ancienne' },
-  { id: 'recent', label: 'Ajout récent' },
-];
+const expiryLabel = (id) => t(`filter.expiry.${id || 'any'}`);
+const SORTS = ['expiry', 'name', 'category', 'space', 'opened', 'recent'];
+const sortLabel = (id) => t(`sort.${id}`);
 
 function viewBase() {
   return S.products.filter((p) => UI.view === 'all' || (UI.view === 'open' ? p.state === 'open' : p.state === 'closed'));
@@ -200,7 +214,7 @@ function matches(p, today, except = null) {
 }
 
 function sortProducts(list) {
-  const byName = (a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }) || a.id - b.id;
+  const byName = (a, b) => a.name.localeCompare(b.name, getLang(), { sensitivity: 'base' }) || a.id - b.id;
   const spacePos = (id) => S.spaces.findIndex((s) => s.id === id);
   const catPos = (id) => CATEGORIES.findIndex((c) => c.id === id);
   const far = '9999-12-31';
@@ -220,25 +234,25 @@ function renderSummary(base, shown, today) {
   const scope = base.filter((p) => matches(p, today, 'expiry'));
   const sts = scope.map((p) => status(p, today));
   const count = (fn) => sts.filter(fn).length;
-  const cards = [{ label: plural(shown.length, 'entrée affichée', 'entrées affichées'), value: shown.length }];
+  const cards = [{ label: t('summary.shown', { count: shown.length }), value: shown.length }];
   if (UI.view === 'all') {
     const open = scope.filter((p) => p.state === 'open').length;
-    cards.push({ label: plural(open, 'ouvert', 'ouverts'), value: open, cls: 'open' });
-    cards.push({ label: plural(scope.length - open, 'fermé', 'fermés'), value: scope.length - open });
+    cards.push({ label: t('summary.open', { count: open }), value: open, cls: 'open' });
+    cards.push({ label: t('summary.closed', { count: scope.length - open }), value: scope.length - open });
   }
   const soon = count((s) => s.soon);
   const expired = count((s) => s.expired);
-  cards.push({ label: `${plural(soon, 'bientôt périmé', 'bientôt périmés')} (≤ ${S.settings.expiry_days} j)`, value: soon, cls: 'warn', filter: 'soon' });
-  cards.push({ label: plural(expired, 'périmé', 'périmés'), value: expired, cls: 'danger', filter: 'expired' });
+  cards.push({ label: t('summary.soon', { count: soon, days: S.settings.expiry_days }), value: soon, cls: 'warn', filter: 'soon' });
+  cards.push({ label: t('summary.expired', { count: expired }), value: expired, cls: 'danger', filter: 'expired' });
   if (UI.view !== 'closed') {
     const long = count((s) => s.openLong);
-    cards.push({ label: `${plural(long, 'ouvert', 'ouverts')} depuis ≥ ${S.settings.open_days} j`, value: long, cls: 'warn', filter: 'openlong' });
+    cards.push({ label: t('summary.openLong', { count: long, days: S.settings.open_days }), value: long, cls: 'warn', filter: 'openlong' });
   }
   $('#summary').innerHTML = cards
     .map((c) =>
       c.filter
         ? `<button type="button" class="stat ${c.cls || ''}" data-filter="${c.filter}" aria-pressed="${UI.expiry === c.filter}"
-             title="Afficher uniquement ces produits"><b>${c.value}</b><span>${esc(c.label)}</span></button>`
+             title="${esc(t('summary.filterTitle'))}"><b>${c.value}</b><span>${esc(c.label)}</span></button>`
         : `<div class="stat ${c.cls || ''}"><b>${c.value}</b><span>${esc(c.label)}</span></div>`,
     )
     .join('');
@@ -252,24 +266,24 @@ function renderSidebar(base, today) {
       ${n === 0 && !active ? 'data-empty' : ''}>${iconHtml}<span class="flabel">${esc(label)}</span><span class="n">${n}</span></button>`;
   };
 
-  const spaces = [item('space', '', 'Tous les espaces', countBy('space', () => true))]
+  const spaces = [item('space', '', t('filter.allSpaces'), countBy('space', () => true))]
     .concat(S.spaces.map((s) => item('space', String(s.id), s.name, countBy('space', (p) => p.space_id === s.id))));
 
-  const cats = [item('category', '', 'Toutes les catégories', countBy('category', () => true), '<span class="cat-icon" aria-hidden="true">✳️</span>')];
+  const cats = [item('category', '', t('filter.allCategories'), countBy('category', () => true), '<span class="cat-icon" aria-hidden="true">✳️</span>')];
   for (const c of CATEGORIES) {
     const n = countBy('category', (p) => p.category === c.id);
-    if (n > 0 || UI.category === c.id) cats.push(item('category', c.id, c.label, n, `<span class="cat-icon" aria-hidden="true">${c.icon}</span>`));
+    if (n > 0 || UI.category === c.id) cats.push(item('category', c.id, categoryOf(c.id).label, n, `<span class="cat-icon" aria-hidden="true">${c.icon}</span>`));
   }
 
   const dates = EXPIRY_FILTERS.filter((f) => f.notIn !== UI.view).map((f) =>
-    item('expiry', f.id, f.label, countBy('expiry', (p) => matchExpiry(p, f.id, today))));
+    item('expiry', f.id, expiryLabel(f.id), countBy('expiry', (p) => matchExpiry(p, f.id, today))));
 
   const active = [UI.space, UI.category, UI.expiry].filter(Boolean).length;
   $('#sidebar-body').innerHTML = `
-    <section class="fgroup"><h3>Espace</h3><div class="flist">${spaces.join('')}</div></section>
-    <section class="fgroup"><h3>Catégorie</h3><div class="flist">${cats.join('')}</div></section>
-    <section class="fgroup"><h3>Péremption</h3><div class="flist">${dates.join('')}</div></section>
-    ${active ? '<button type="button" class="link-btn reset" data-action="reset-filters">Réinitialiser les filtres</button>' : ''}`;
+    <section class="fgroup"><h3>${esc(t('product.space'))}</h3><div class="flist">${spaces.join('')}</div></section>
+    <section class="fgroup"><h3>${esc(t('product.category'))}</h3><div class="flist">${cats.join('')}</div></section>
+    <section class="fgroup"><h3>${esc(t('product.expiry'))}</h3><div class="flist">${dates.join('')}</div></section>
+    ${active ? `<button type="button" class="link-btn reset" data-action="reset-filters">${esc(t('filter.reset'))}</button>` : ''}`;
   const badge = $('#filters-count');
   badge.hidden = !active;
   badge.textContent = active;
@@ -288,14 +302,16 @@ function gaugeHtml(value) {
 
 function badges(p, st) {
   const out = [
-    p.state === 'open' ? '<span class="badge open">Ouvert</span>' : '<span class="badge closed">Fermé</span>',
+    p.state === 'open' ? `<span class="badge open">${esc(t('state.open'))}</span>` : `<span class="badge closed">${esc(t('state.closed'))}</span>`,
   ];
-  if (st.expired) out.push(`<span class="badge expired">⛔ Périmé${st.daysLeft === -1 ? ' depuis hier' : ` depuis ${-st.daysLeft} j`}</span>`);
-  else if (st.soon) {
-    const txt = st.daysLeft === 0 ? "Périme aujourd'hui" : st.daysLeft === 1 ? 'Périme demain' : `Périme dans ${st.daysLeft} j`;
-    out.push(`<span class="badge soon">⏳ ${txt}</span>`);
+  if (st.expired) {
+    const txt = st.daysLeft === -1 ? t('badge.expiredYesterday') : t('badge.expiredSince', { count: -st.daysLeft });
+    out.push(`<span class="badge expired">⛔ ${esc(txt)}</span>`);
+  } else if (st.soon) {
+    const txt = st.daysLeft === 0 ? t('badge.expiresToday') : st.daysLeft === 1 ? t('badge.expiresTomorrow') : t('badge.expiresIn', { count: st.daysLeft });
+    out.push(`<span class="badge soon">⏳ ${esc(txt)}</span>`);
   }
-  if (st.openLong) out.push(`<span class="badge long">Ouvert depuis ${st.openDays} j</span>`);
+  if (st.openLong) out.push(`<span class="badge long">${esc(t('badge.openSince', { count: st.openDays }))}</span>`);
   return out.join('');
 }
 
@@ -304,16 +320,19 @@ function itemHtml(p, today) {
   const cls = ['item', p.state === 'open' && 'is-open', st.soon && 'is-soon', st.expired && 'is-expired'].filter(Boolean).join(' ');
   const cat = categoryOf(p.category);
   const meta = [`<span>${icon('pin')}${esc(spaceName(p.space_id))}</span>`];
-  if (p.expires_on) meta.push(`<span>Péremption : ${fmtDate(p.expires_on)}</span>`);
-  if (p.state === 'open' && p.opened_on) meta.push(`<span>Ouvert le ${fmtDate(p.opened_on)}${st.openLong ? '' : ` (${st.openDays} j)`}</span>`);
+  if (p.expires_on) meta.push(`<span>${esc(t('item.expiry', { date: fmtDate(p.expires_on) }))}</span>`);
+  if (p.state === 'open' && p.opened_on) {
+    const txt = st.openLong ? t('item.openedOn', { date: fmtDate(p.opened_on) }) : t('item.openedOnDays', { date: fmtDate(p.opened_on), count: st.openDays });
+    meta.push(`<span>${esc(txt)}</span>`);
+  }
   const name = esc(p.name);
   const step = unitOf(p.unit).step;
   let level = '';
   if (p.state === 'open') {
     const l = remainingLevel(p);
     level = `<button type="button" class="level-btn" data-act="level" aria-haspopup="menu" aria-expanded="false"
-        aria-label="Reste dans ${name} : ${l ? esc(l.label) : 'non indiqué'}. Modifier">
-        ${gaugeHtml(l?.value)}<span><span class="lw">Reste </span>${l ? esc(l.short) : '?'}</span></button>`;
+        aria-label="${esc(t('item.levelAria', { name: p.name, level: l ? levelLabel(l) : t('level.none').toLowerCase() }))}">
+        ${gaugeHtml(l?.value)}<span><span class="lw">${esc(t('item.levelWord'))} </span>${l ? esc(levelShort(l)) : '?'}</span></button>`;
   }
   return `<li class="${cls}" data-id="${p.id}">
     <span class="cat-badge" role="img" aria-label="${esc(cat.label)}" title="${esc(cat.label)}">${cat.icon}</span>
@@ -324,14 +343,14 @@ function itemHtml(p, today) {
     <div class="item-side">
       ${level}
       <div class="qty-box">
-        <button type="button" class="icon-btn" data-act="dec" aria-label="Retirer ${esc(numFmt.format(step))} ${esc(p.unit)} de ${name}">${icon('minus')}</button>
-        <button type="button" class="qty-btn" data-act="qty" aria-label="Quantité : ${esc(qtyLabel(p))}. Modifier">${esc(qtyLabel(p))}</button>
-        <button type="button" class="icon-btn" data-act="inc" aria-label="Ajouter ${esc(numFmt.format(step))} ${esc(p.unit)} de ${name}">${icon('plus')}</button>
+        <button type="button" class="icon-btn" data-act="dec" aria-label="${esc(t('item.decAria', { qty: `${numFmt.format(step)} ${unitLabel(p.unit, step)}`, name: p.name }))}">${icon('minus')}</button>
+        <button type="button" class="qty-btn" data-act="qty" aria-label="${esc(t('item.qtyAria', { qty: qtyLabel(p) }))}">${esc(qtyLabel(p))}</button>
+        <button type="button" class="icon-btn" data-act="inc" aria-label="${esc(t('item.incAria', { qty: `${numFmt.format(step)} ${unitLabel(p.unit, step)}`, name: p.name }))}">${icon('plus')}</button>
       </div>
       <div class="actions">
-        ${p.state === 'closed' ? `<button type="button" class="btn btn-sm open-btn" data-act="open" aria-label="Ouvrir ${name}">Ouvrir</button>` : ''}
-        <button type="button" class="icon-btn" data-act="edit" aria-label="Modifier ${name}" title="Modifier">${icon('edit')}</button>
-        <button type="button" class="icon-btn danger" data-act="delete" aria-label="Supprimer ${name}" title="Supprimer">${icon('trash')}</button>
+        ${p.state === 'closed' ? `<button type="button" class="btn btn-sm open-btn" data-act="open" aria-label="${esc(t('item.openAria', { name: p.name }))}">${esc(t('open.submit'))}</button>` : ''}
+        <button type="button" class="icon-btn" data-act="edit" aria-label="${esc(t('item.editAria', { name: p.name }))}" title="${esc(t('common.edit'))}">${icon('edit')}</button>
+        <button type="button" class="icon-btn danger" data-act="delete" aria-label="${esc(t('item.deleteAria', { name: p.name }))}" title="${esc(t('common.delete'))}">${icon('trash')}</button>
       </div>
     </div>
   </li>`;
@@ -339,45 +358,45 @@ function itemHtml(p, today) {
 
 function emptyHtml() {
   if (!S.spaces.length) {
-    return `<div class="big">🗄️</div><h2>Créez d'abord un espace de rangement</h2>
-      <p>Placard, frigo, congélateur… Chaque produit est rangé dans un espace.</p>
-      <div class="row-actions"><a class="btn btn-primary" href="#/parametres">Ouvrir les paramètres</a></div>`;
+    return `<div class="big">🗄️</div><h2>${esc(t('empty.noSpace.title'))}</h2>
+      <p>${esc(t('empty.noSpace.text'))}</p>
+      <div class="row-actions"><a class="btn btn-primary" href="#/parametres">${esc(t('empty.noSpace.action'))}</a></div>`;
   }
+  const addBtn = `<button type="button" class="btn btn-primary" data-action="add">${icon('plus')} ${esc(t('product.add'))}</button>`;
   if (!S.products.length) {
-    return `<div class="big">🧺</div><h2>Votre stock est vide</h2>
-      <p>Ajoutez vos premiers produits : seuls le nom, l'espace, la quantité et l'état sont nécessaires.
-      Vous pouvez aussi charger quelques exemples pour découvrir l'application.</p>
+    return `<div class="big">🧺</div><h2>${esc(t('empty.stock.title'))}</h2>
+      <p>${esc(t('empty.stock.text'))}</p>
       <div class="row-actions">
-        <button type="button" class="btn btn-primary" data-action="add">${icon('plus')} Ajouter un produit</button>
-        <button type="button" class="btn" data-action="demo">Charger des exemples</button>
+        ${addBtn}
+        <button type="button" class="btn" data-action="demo">${esc(t('empty.stock.demo'))}</button>
       </div>`;
   }
   if (UI.q || UI.space || UI.category || UI.expiry) {
-    return `<div class="big">🔎</div><h2>Aucun produit ne correspond</h2>
-      <p>Essayez une autre recherche ou retirez les filtres.</p>
-      <div class="row-actions"><button type="button" class="btn" data-action="reset-filters">Réinitialiser les filtres</button></div>`;
+    return `<div class="big">🔎</div><h2>${esc(t('empty.noMatch.title'))}</h2>
+      <p>${esc(t('empty.noMatch.text'))}</p>
+      <div class="row-actions"><button type="button" class="btn" data-action="reset-filters">${esc(t('filter.reset'))}</button></div>`;
   }
   return UI.view === 'open'
-    ? `<div class="big">📦</div><h2>Aucun produit ouvert</h2><p>Utilisez le bouton « Ouvrir » d'un produit fermé pour le faire apparaître ici.</p>`
-    : `<div class="big">✨</div><h2>Aucun produit fermé</h2><p>Les produits ajoutés avec l'état « Fermé » apparaîtront ici.</p>
-       <div class="row-actions"><button type="button" class="btn btn-primary" data-action="add">${icon('plus')} Ajouter un produit</button></div>`;
+    ? `<div class="big">📦</div><h2>${esc(t('empty.open.title'))}</h2><p>${esc(t('empty.open.text'))}</p>`
+    : `<div class="big">✨</div><h2>${esc(t('empty.closed.title'))}</h2><p>${esc(t('empty.closed.text'))}</p>
+       <div class="row-actions">${addBtn}</div>`;
 }
 
 function filterDescription() {
   const parts = [];
-  if (UI.q) parts.push(`recherche « ${UI.q} »`);
-  if (UI.space) parts.push(`espace : ${spaceName(Number(UI.space))}`);
-  if (UI.category) parts.push(`catégorie : ${categoryOf(UI.category).label}`);
-  if (UI.expiry) parts.push(EXPIRY_FILTERS.find((f) => f.id === UI.expiry).label.toLowerCase());
+  if (UI.q) parts.push(t('filterInfo.search', { q: UI.q }));
+  if (UI.space) parts.push(t('filterInfo.space', { name: spaceName(Number(UI.space)) }));
+  if (UI.category) parts.push(t('filterInfo.category', { name: categoryOf(UI.category).label }));
+  if (UI.expiry) parts.push(expiryLabel(UI.expiry).toLowerCase());
   return parts;
 }
 
 function renderList() {
   const today = localToday();
-  $('#list-title').textContent = TITLES[UI.view];
+  $('#list-title').textContent = title(UI.view);
   if ($('#f-q').value !== UI.q) $('#f-q').value = UI.q;
   if (UI.view === 'closed' && UI.expiry === 'openlong') UI.expiry = '';
-  $('#sort-label').textContent = SORTS.find((s) => s.id === UI.sort)?.label ?? '';
+  $('#sort-label').textContent = SORTS.includes(UI.sort) ? sortLabel(UI.sort) : '';
 
   const base = viewBase();
   const shown = sortProducts(base.filter((p) => matches(p, today)));
@@ -388,7 +407,7 @@ function renderList() {
   const info = $('#filter-info');
   info.hidden = parts.length === 0;
   info.innerHTML = parts.length
-    ? `<span>Filtres : ${esc(parts.join(' · '))}</span><button type="button" class="link-btn" data-action="reset-filters">Tout afficher</button>`
+    ? `<span>${esc(t('filterInfo.prefix', { filters: parts.join(' · ') }))}</span><button type="button" class="link-btn" data-action="reset-filters">${esc(t('filterInfo.showAll'))}</button>`
     : '';
 
   $('#list').innerHTML = shown.map((p) => itemHtml(p, today)).join('');
@@ -436,29 +455,29 @@ function renderPrint(products, today, filterParts) {
     }
     const st = status(p, today);
     let exp = p.expires_on ? fmtDate(p.expires_on) : '—';
-    if (st.expired) exp = `<span class="p-expired">${exp} — PÉRIMÉ</span>`;
-    else if (st.soon) exp = `<span class="p-flag">${exp} ⚠ J-${st.daysLeft}</span>`;
-    const opened = p.state === 'open' && p.opened_on ? `${fmtDate(p.opened_on)}${st.openLong ? ` <span class="p-flag">(${st.openDays} j)</span>` : ''}` : '—';
+    if (st.expired) exp = `<span class="p-expired">${exp} — ${esc(t('print.expired'))}</span>`;
+    else if (st.soon) exp = `<span class="p-flag">${exp} ⚠ ${esc(t('print.daysLeft', { count: st.daysLeft }))}</span>`;
+    const opened = p.state === 'open' && p.opened_on ? `${fmtDate(p.opened_on)}${st.openLong ? ` <span class="p-flag">(${esc(t('print.days', { count: st.openDays }))})</span>` : ''}` : '—';
     const level = p.state === 'open' ? remainingLevel(p) : null;
     rows.push(`<tr>
       <td class="box"><span></span></td>
       <td><span class="p-cat">${categoryOf(p.category).icon}</span> ${esc(p.name)}</td>
-      <td class="qty">${esc(qtyLabel(p))}${level ? `<br><small>reste ${esc(level.short)}</small>` : ''}</td>
-      <td>${p.state === 'open' ? '<b>Ouvert</b>' : 'Fermé'}</td>
+      <td class="qty">${esc(qtyLabel(p))}${level ? `<br><small>${esc(t('print.remaining', { level: levelShort(level) }))}</small>` : ''}</td>
+      <td>${p.state === 'open' ? `<b>${esc(t('state.open'))}</b>` : esc(t('state.closed'))}</td>
       <td>${esc(spaceName(p.space_id))}</td>
       <td>${exp}</td>
       <td>${opened}</td>
     </tr>`);
   }
   $('#print').innerHTML = `
-    <div class="print-head"><h1>${esc(TITLES[UI.view])}</h1>
-      <span>Imprimé le ${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span></div>
-    <p class="print-sub">${products.length} ${plural(products.length, 'entrée', 'entrées')}${filterParts.length ? ` · Filtres : ${esc(filterParts.join(' · '))}` : ''}</p>
+    <div class="print-head"><h1>${esc(title(UI.view))}</h1>
+      <span>${esc(t('print.printedAt', { date: now.toLocaleDateString(locale()), time: now.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) }))}</span></div>
+    <p class="print-sub">${esc(t('print.entries', { count: products.length }))}${filterParts.length ? ` · ${esc(t('filterInfo.prefix', { filters: filterParts.join(' · ') }))}` : ''}</p>
     <table>
-      <thead><tr><th></th><th>Produit</th><th>Quantité</th><th>État</th><th>Espace</th><th>Péremption</th><th>Ouvert le</th></tr></thead>
-      <tbody>${rows.join('') || '<tr><td colspan="7">Aucun produit.</td></tr>'}</tbody>
+      <thead><tr><th></th>${['product.name', 'product.quantity', 'product.state', 'product.space', 'product.expiry', 'product.openedOn'].map((k) => `<th>${esc(t(k))}</th>`).join('')}</tr></thead>
+      <tbody>${rows.join('') || `<tr><td colspan="7">${esc(t('print.none'))}</td></tr>`}</tbody>
     </table>
-    <p class="print-legend">⚠ J-n : périme dans n jours (seuil ${S.settings.expiry_days} j) · (n j) : ouvert depuis n jours (seuil ${S.settings.open_days} j) · Cochez la case quand le produit est terminé.</p>`;
+    <p class="print-legend">${esc(t('print.legend', { expiry: S.settings.expiry_days, open: S.settings.open_days }))}</p>`;
 }
 
 /* ================= Menus déroulants ================= */
@@ -536,8 +555,8 @@ async function changeQuantity(p, delta) {
     if (next <= 0) {
       await api('DELETE', `/api/products/${p.id}`);
       await refresh();
-      toast(`${p.name} : terminé, entrée retirée`, {
-        action: 'Annuler',
+      toast(t('toast.finished', { name: p.name }), {
+        action: t('common.undo'),
         onAction: () => api('POST', '/api/products', { ...productPayload(p), merge: false }).then(refresh).catch(fail),
       });
     } else {
@@ -555,9 +574,9 @@ async function changeQuantity(p, delta) {
 function pickLevel(button, p) {
   const items = S.remaining_levels.map((l) => ({
     value: l.value, checked: p.remaining === l.value,
-    html: `${gaugeHtml(l.value)}<span>${esc(l.label)}</span>`,
+    html: `${gaugeHtml(l.value)}<span>${esc(levelLabel(l))}</span>`,
   }));
-  items.push({ value: null, checked: p.remaining == null, html: `${gaugeHtml(null)}<span>Non indiqué</span>` });
+  items.push({ value: null, checked: p.remaining == null, html: `${gaugeHtml(null)}<span>${esc(t('level.none'))}</span>` });
   showMenu(button, items, async (value) => {
     try {
       await api('PATCH', `/api/products/${p.id}`, { remaining: value });
@@ -566,21 +585,21 @@ function pickLevel(button, p) {
     } catch (err) {
       fail(err);
     }
-  }, { label: `Reste dans ${p.name}` });
+  }, { label: t('item.levelMenu', { name: p.name }) });
 }
 
 async function deleteProduct(p) {
   const ok = await confirmDialog({
-    title: 'Supprimer ce produit ?',
-    html: `<p><strong>${esc(p.name)}</strong> — ${esc(qtyLabel(p))}, ${p.state === 'open' ? 'ouvert' : 'fermé'}, ${esc(spaceName(p.space_id))}.</p>
-           <p>Cette entrée sera retirée du stock.</p>`,
+    title: t('delete.title'),
+    html: `<p><strong>${esc(p.name)}</strong> — ${esc(qtyLabel(p))}, ${esc(t(p.state === 'open' ? 'state.open' : 'state.closed').toLowerCase())}, ${esc(spaceName(p.space_id))}.</p>
+           <p>${esc(t('delete.text'))}</p>`,
   });
   if (!ok) return;
   try {
     await api('DELETE', `/api/products/${p.id}`);
     await refresh();
-    toast(`${p.name} supprimé`, {
-      action: 'Annuler',
+    toast(t('toast.deleted', { name: p.name }), {
+      action: t('common.undo'),
       onAction: () => api('POST', '/api/products', { ...productPayload(p), merge: false }).then(refresh).catch(fail),
     });
   } catch (err) {
@@ -614,11 +633,11 @@ $('#f-q').addEventListener('input', (e) => {
 });
 
 $('#sort-btn').addEventListener('click', (e) => {
-  showMenu(e.currentTarget, SORTS.map((s) => ({ value: s.id, label: s.label, checked: s.id === UI.sort })), (value) => {
+  showMenu(e.currentTarget, SORTS.map((id) => ({ value: id, label: sortLabel(id), checked: id === UI.sort })), (value) => {
     UI.sort = value;
     store.set('f-sort', value);
     renderList();
-  }, { label: 'Trier par' });
+  }, { label: t('sort.label') });
 });
 
 $('#sidebar-body').addEventListener('click', (e) => {
@@ -659,7 +678,7 @@ function setupDialog(dialog) {
 }
 $$('dialog').forEach(setupDialog);
 
-function confirmDialog({ title, html, ok = 'Supprimer' }) {
+function confirmDialog({ title, html, ok = t('common.delete') }) {
   const d = $('#confirm-dialog');
   $('#cd-title').textContent = title;
   $('#cd-body').innerHTML = html;
@@ -681,7 +700,7 @@ function stepperSetup(root) {
     const max = Number(input.dataset.max) || Infinity;
     const v = parseQty(input.value);
     const next = round((Number.isFinite(v) ? v : 0) + step);
-    if (next > 0 && next <= max) input.value = numFmt.format(next).replace(/\s/g, '');
+    if (next > 0 && next <= max) input.value = inputFmt.format(next);
   });
 }
 
@@ -713,7 +732,7 @@ function syncCategory() {
   const name = pf.elements.name.value;
   const known = S.history.find((h) => h.category && norm(h.name) === norm(name));
   pf.elements.category.value = known?.category ?? guessCategory(name);
-  $('#pf-cat-hint').textContent = name.trim() ? '(déduite du nom, modifiable)' : '';
+  $('#pf-cat-hint').textContent = name.trim() ? t('product.categoryGuessed') : '';
 }
 
 function syncUnitStep() {
@@ -722,7 +741,7 @@ function syncUnitStep() {
 
 function openProductForm(product = null, focusSel = '#pf-name') {
   if (!S.spaces.length) {
-    toast("Créez d'abord un espace de rangement dans les paramètres", { error: true });
+    toast(t('toast.needSpace'), { error: true });
     location.hash = '#/parametres';
     return;
   }
@@ -730,7 +749,7 @@ function openProductForm(product = null, focusSel = '#pf-name') {
   unitTouched = Boolean(product);
   catTouched = Boolean(product);
   setFormError(pf, '');
-  $('#pd-title').textContent = product ? 'Modifier le produit' : 'Ajouter un produit';
+  $('#pd-title').textContent = product ? t('product.edit') : t('product.add');
   $('#pf-again').hidden = Boolean(product);
 
   const lastSpace = store.get('last-space', null);
@@ -740,14 +759,14 @@ function openProductForm(product = null, focusSel = '#pf-name') {
   $('#pf-spaces').innerHTML = S.spaces
     .map((s) => `<label><input type="radio" name="space_id" value="${s.id}" ${s.id === defaultSpace ? 'checked' : ''}><span>${esc(s.name)}</span></label>`)
     .join('');
-  $('#pf-unit').innerHTML = S.units.map((u) => `<option value="${esc(u.id)}">${esc(u.id)}</option>`).join('');
-  $('#pf-cat').innerHTML = CATEGORIES.map((c) => `<option value="${c.id}">${c.icon}  ${esc(c.label)}</option>`).join('');
-  $('#pf-remaining').innerHTML = [...S.remaining_levels, { value: '', label: 'Non indiqué' }]
-    .map((l) => `<label><input type="radio" name="remaining" value="${l.value}"><span>${l.value === '' ? '' : gaugeHtml(l.value)}${esc(l.label)}</span></label>`)
+  $('#pf-unit').innerHTML = S.units.map((u) => `<option value="${esc(u.id)}">${esc(unitName(u.id, 1))}</option>`).join('');
+  $('#pf-cat').innerHTML = CATEGORIES.map((c) => `<option value="${c.id}">${c.icon}  ${esc(categoryOf(c.id).label)}</option>`).join('');
+  $('#pf-remaining').innerHTML = [...S.remaining_levels, { value: '' }]
+    .map((l) => `<label><input type="radio" name="remaining" value="${l.value}"><span>${l.value === '' ? esc(t('level.none')) : gaugeHtml(l.value) + esc(levelLabel(l))}</span></label>`)
     .join('');
 
   pf.elements.name.value = product?.name ?? '';
-  pf.elements.quantity.value = numFmt.format(product?.quantity ?? 1).replace(/\s/g, '');
+  pf.elements.quantity.value = inputFmt.format(product?.quantity ?? 1);
   pf.elements.unit.value = product?.unit ?? 'unité';
   const state = product?.state ?? (UI.view === 'open' ? 'open' : 'closed');
   pf.querySelector(`input[name="state"][value="${state}"]`).checked = true;
@@ -791,8 +810,8 @@ pf.addEventListener('submit', async (e) => {
     category: f.category.value,
     remaining: f.state.value === 'open' && f.remaining.value ? Number(f.remaining.value) : null,
   };
-  if (!body.name) { setFormError(pf, 'Indiquez le nom du produit.'); f.name.focus(); return; }
-  if (!(quantity > 0)) { setFormError(pf, 'La quantité doit être supérieure à 0.'); f.quantity.focus(); return; }
+  if (!body.name) { setFormError(pf, t('product.nameMissing')); f.name.focus(); return; }
+  if (!(quantity > 0)) { setFormError(pf, t('product.quantityInvalid')); f.quantity.focus(); return; }
   setFormError(pf, '');
   const buttons = $$('button[type="submit"]', pf);
   buttons.forEach((b) => (b.disabled = true));
@@ -800,11 +819,11 @@ pf.addEventListener('submit', async (e) => {
     if (editing) {
       await api('PATCH', `/api/products/${editing.id}`, body);
       pd.close();
-      toast(`${body.name} mis à jour`);
+      toast(t('toast.updated', { name: body.name }));
     } else {
       const res = await api('POST', '/api/products', body);
       store.set('last-space', body.space_id);
-      toast(res.merged ? `${body.name} : quantité ajoutée à l'entrée existante` : `${body.name} ajouté`);
+      toast(res.merged ? t('toast.merged', { name: body.name }) : t('toast.added', { name: body.name }));
       if (again) {
         f.name.value = '';
         f.quantity.value = '1';
@@ -860,7 +879,7 @@ function showSuggest() {
   if (!suggestions.length) return hideSuggest();
   activeIndex = -1;
   suggestEl.innerHTML = suggestions
-    .map((s, i) => `<li role="option" id="sg-${i}" data-i="${i}" aria-selected="false"><span><span class="sg-icon" aria-hidden="true">${categoryOf(s.category).icon}</span>${esc(s.name)}</span><small>${s.known ? 'déjà utilisé · ' : ''}${esc(s.unit)}</small></li>`)
+    .map((s, i) => `<li role="option" id="sg-${i}" data-i="${i}" aria-selected="false"><span><span class="sg-icon" aria-hidden="true">${categoryOf(s.category).icon}</span>${esc(s.name)}</span><small>${s.known ? `${esc(t('product.alreadyUsed'))} · ` : ''}${esc(unitName(s.unit, 1))}</small></li>`)
     .join('');
   suggestEl.hidden = false;
   nameInput.setAttribute('aria-expanded', 'true');
@@ -876,7 +895,7 @@ function pickSuggestion(i) {
   }
   if (!catTouched) {
     pf.elements.category.value = s.category;
-    $('#pf-cat-hint').textContent = '(déduite du nom, modifiable)';
+    $('#pf-cat-hint').textContent = t('product.categoryGuessed');
   }
   hideSuggest();
   $('#pf-qty').focus();
@@ -916,16 +935,15 @@ function openOpenDialog(p) {
   opening = p;
   setFormError(of, '');
   const unitWord = unitLabel(p.unit, 1);
-  $('#od-title').textContent = `Ouvrir : ${p.name}`;
-  $('#od-text').textContent =
-    `Stock fermé : ${qtyLabel(p)} (${spaceName(p.space_id)}). La quantité ouverte sera retirée du stock fermé et ajoutée aux produits ouverts.`;
+  $('#od-title').textContent = t('open.title', { name: p.name });
+  $('#od-text').textContent = t('open.text', { qty: qtyLabel(p), space: spaceName(p.space_id) });
   const qty = Math.min(unitOf(p.unit).step, p.quantity);
   const input = of.elements.quantity;
-  input.value = numFmt.format(['kg', 'L', 'g', 'cL'].includes(p.unit) ? p.quantity : qty).replace(/\s/g, '');
+  input.value = inputFmt.format(['kg', 'L', 'g', 'cL'].includes(p.unit) ? p.quantity : qty);
   input.dataset.step = unitOf(p.unit).step;
   input.dataset.max = p.quantity;
   of.elements.opened_on.value = localToday();
-  $('label[for="of-qty"]').textContent = `Quantité à ouvrir (${unitWord})`;
+  $('label[for="of-qty"]').textContent = t('open.quantity', { unit: unitWord });
   od.showModal();
   $('button[type="submit"]', of).focus();
 }
@@ -934,13 +952,13 @@ of.addEventListener('submit', async (e) => {
   e.preventDefault();
   const quantity = parseQty(of.elements.quantity.value);
   if (!(quantity > 0) || quantity > opening.quantity) {
-    setFormError(of, `Indiquez une quantité entre 0 et ${numFmt.format(opening.quantity)}.`);
+    setFormError(of, t('open.quantityInvalid', { max: numFmt.format(opening.quantity) }));
     return;
   }
   try {
     await api('POST', `/api/products/${opening.id}/open`, { quantity, opened_on: of.elements.opened_on.value || null });
     od.close();
-    toast(`${opening.name} : ${numFmt.format(quantity)} ${unitLabel(opening.unit, quantity)} ${plural(quantity, 'ouvert', 'ouverts')}`);
+    toast(t('toast.opened', { name: opening.name, qty: `${numFmt.format(quantity)} ${unitLabel(opening.unit, quantity)}`, count: quantity }));
     await refresh();
   } catch (err) {
     setFormError(of, err.message);
@@ -959,15 +977,15 @@ function renderSettings() {
         .map(
           (s, i) => `<li data-space="${s.id}">
             <span class="space-name">${esc(s.name)}</span>
-            <span class="count">${s.product_count} ${plural(s.product_count, 'produit', 'produits')}</span>
-            <button type="button" class="icon-btn" data-sact="up" aria-label="Monter ${esc(s.name)}" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
-            <button type="button" class="icon-btn" data-sact="down" aria-label="Descendre ${esc(s.name)}" ${i === S.spaces.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
-            <button type="button" class="icon-btn" data-sact="rename" aria-label="Renommer ${esc(s.name)}" title="Renommer">${icon('edit')}</button>
-            <button type="button" class="icon-btn danger" data-sact="delete" aria-label="Supprimer ${esc(s.name)}" title="Supprimer">${icon('trash')}</button>
+            <span class="count">${esc(t('spaces.count', { count: s.product_count }))}</span>
+            <button type="button" class="icon-btn" data-sact="up" aria-label="${esc(t('spaces.up', { name: s.name }))}" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
+            <button type="button" class="icon-btn" data-sact="down" aria-label="${esc(t('spaces.down', { name: s.name }))}" ${i === S.spaces.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
+            <button type="button" class="icon-btn" data-sact="rename" aria-label="${esc(t('spaces.renameAria', { name: s.name }))}" title="${esc(t('spaces.rename'))}">${icon('edit')}</button>
+            <button type="button" class="icon-btn danger" data-sact="delete" aria-label="${esc(t('item.deleteAria', { name: s.name }))}" title="${esc(t('common.delete'))}">${icon('trash')}</button>
           </li>`,
         )
         .join('')
-    : '<li class="empty-row">Aucun espace. Ajoutez-en un ci-dessous pour commencer.</li>';
+    : `<li class="empty-row">${esc(t('spaces.none'))}</li>`;
 
   const st = S.settings;
   const nf = $('#notif-form');
@@ -981,32 +999,42 @@ function renderSettings() {
 
   const ws = $('#webhook-status');
   ws.innerHTML = st.webhook_configured
-    ? `<span class="dot ok"></span> Webhook configuré${st.webhook_from_env ? ' (variable d’environnement)' : ''}`
-    : '<span class="dot"></span> Aucun webhook configuré';
+    ? `<span class="dot ok"></span> ${esc(t(st.webhook_from_env ? 'notif.configuredEnv' : 'notif.configured'))}`
+    : `<span class="dot"></span> ${esc(t('notif.notConfigured'))}`;
   nf.elements.webhook_url.placeholder = st.webhook_configured
-    ? 'Webhook enregistré — saisissez une nouvelle URL pour le remplacer'
+    ? t('notif.replacePlaceholder')
     : 'https://discord.com/api/webhooks/…';
   nf.elements.webhook_url.disabled = st.webhook_from_env;
-  $('#webhook-help').textContent = st.webhook_from_env
-    ? 'Défini par la variable DISCORD_WEBHOOK_URL : modifiez-la dans la configuration Docker.'
-    : 'L’URL est conservée uniquement sur le serveur et n’est jamais réaffichée.';
+  $('#webhook-help').textContent = t(st.webhook_from_env ? 'notif.envHelp' : 'notif.urlHelp');
   $('[data-action="clear-webhook"]').hidden = !st.webhook_configured || st.webhook_from_env;
 
   $('#digest-status').textContent = st.last_digest_at
-    ? `Dernier traitement : ${new Date(st.last_digest_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })} — ${st.last_digest_status}`
-    : 'Aucun récapitulatif envoyé pour le moment.';
+    ? t('notif.lastRun', { date: fmtDateTime(st.last_digest_at), status: digestStatus(st) })
+    : t('notif.neverSent');
   $('#demo-item').hidden = S.products.length > 0;
-  $('#auth-status').textContent = st.auth_enabled
-    ? 'Activé : un mot de passe est demandé à chaque nouvel appareil (session de 30 jours).'
-    : 'Désactivé : l’application est ouverte à tous sur le réseau.';
-  $('#auth-set-btn').lastChild.textContent = st.auth_enabled ? ' Modifier…' : ' Activer…';
+  $('#auth-status').textContent = t(st.auth_enabled ? 'auth.statusOn' : 'auth.statusOff');
+  $('#auth-set-label').textContent = t(st.auth_enabled ? 'auth.changeButton' : 'auth.enableButton');
   $('#auth-off-btn').hidden = !st.auth_enabled;
-  const fmtDate = (iso) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
   $('#api-key-status').textContent = st.api_key_enabled
-    ? `Active (${st.api_key_hint}), créée le ${fmtDate(st.api_key_created_at)} — ${st.api_key_last_used_at ? `dernier appel le ${fmtDate(st.api_key_last_used_at)}` : 'jamais utilisée'}.`
-    : 'Aucune clé : l’API externe (lecture du stock) est désactivée.';
-  $('#api-key-create-btn').lastChild.textContent = st.api_key_enabled ? ' Régénérer…' : ' Générer…';
+    ? t(st.api_key_last_used_at ? 'apiKey.statusUsed' : 'apiKey.statusUnused', {
+      hint: st.api_key_hint, created: fmtDateTime(st.api_key_created_at), used: st.api_key_last_used_at ? fmtDateTime(st.api_key_last_used_at) : '',
+    })
+    : t('apiKey.statusOff');
+  $('#api-key-create-label').textContent = t(st.api_key_enabled ? 'apiKey.regenerateButton' : 'apiKey.createButton');
+  $('#lang-select').value = storedLang() ?? '';
   $('#api-key-revoke-btn').hidden = !st.api_key_enabled;
+}
+
+/** Dernier traitement du récapitulatif : code stable traduit, sinon texte enregistré par le serveur. */
+function digestStatus(st) {
+  const p = st.last_digest_params || {};
+  switch (st.last_digest_code) {
+    case 'nothing_to_report': return t('digest.nothing');
+    case 'unchanged': return t('digest.unchanged');
+    case 'sent': return t('digest.sent', { count: p.count });
+    case 'failed': return t('digest.failed', { reason: errorMessage({ error: p.reason, code: p.reason_code, params: p.reason_params }) });
+    default: return st.last_digest_status;
+  }
 }
 
 /* ----- Clé d'API ----- */
@@ -1014,9 +1042,9 @@ function renderSettings() {
 async function createApiKey() {
   if (S.settings.api_key_enabled) {
     const ok = await confirmDialog({
-      title: 'Régénérer la clé d’API',
-      html: '<p>L’ancienne clé cessera immédiatement de fonctionner : les applications qui l’utilisent devront recevoir la nouvelle.</p>',
-      ok: 'Régénérer',
+      title: t('apiKey.regenerateTitle'),
+      html: `<p>${esc(t('apiKey.regenerateText'))}</p>`,
+      ok: t('apiKey.regenerate'),
     });
     if (!ok) return;
   }
@@ -1030,14 +1058,14 @@ async function createApiKey() {
 
 async function revokeApiKey() {
   const ok = await confirmDialog({
-    title: 'Révoquer la clé d’API',
-    html: '<p>Les applications qui utilisent cette clé perdront l’accès au stock.</p>',
-    ok: 'Révoquer',
+    title: t('apiKey.revokeTitle'),
+    html: `<p>${esc(t('apiKey.revokeText'))}</p>`,
+    ok: t('apiKey.revoke'),
   });
   if (!ok) return;
   const res = await api('DELETE', '/api/api-key', {});
   S.settings = res.settings;
-  toast('Clé d’API révoquée');
+  toast(t('toast.apiKeyRevoked'));
   render();
 }
 
@@ -1054,16 +1082,13 @@ function openAuthDialog(mode) {
   const enabled = S.settings.auth_enabled;
   authForm.reset();
   setFormError(authForm, '');
-  $('#ad-title').textContent = mode === 'off' ? 'Désactiver le mot de passe' : enabled ? 'Modifier le mot de passe' : 'Protéger l’accès par un mot de passe';
-  $('#ad-intro').textContent = mode === 'off'
-    ? 'L’application redeviendra accessible sans mot de passe à toute personne sur le réseau.'
-    : enabled
-      ? 'Les autres appareils connectés devront saisir le nouveau mot de passe.'
-      : 'Un seul mot de passe, partagé par tout le foyer, sera demandé sur chaque appareil. Cet appareil reste connecté.';
+  const variant = mode === 'off' ? 'off' : enabled ? 'change' : 'enable';
+  $('#ad-title').textContent = t(`auth.${variant}.title`);
+  $('#ad-intro').textContent = t(`auth.${variant}.intro`);
   $('#ad-current-field').hidden = !enabled;
   $('#ad-new-field').hidden = mode === 'off';
   $('#ad-confirm-field').hidden = mode === 'off';
-  $('#ad-submit').textContent = mode === 'off' ? 'Désactiver' : enabled ? 'Modifier' : 'Activer';
+  $('#ad-submit').textContent = t(`auth.${variant}.submit`);
   $('#ad-submit').className = `btn ${mode === 'off' ? 'btn-danger' : 'btn-primary'}`;
   authDialog.showModal();
   (enabled ? authForm.elements.current_password : authForm.elements.new_password).focus();
@@ -1073,8 +1098,8 @@ authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = authForm.elements;
   if (authMode === 'set') {
-    if (f.new_password.value.length < 6) { setFormError(authForm, 'Le mot de passe doit contenir au moins 6 caractères.'); f.new_password.focus(); return; }
-    if (f.new_password.value !== f.confirm_password.value) { setFormError(authForm, 'Les deux mots de passe ne correspondent pas.'); f.confirm_password.focus(); return; }
+    if (f.new_password.value.length < 6) { setFormError(authForm, t('error.password_too_short', { min: 6 })); f.new_password.focus(); return; }
+    if (f.new_password.value !== f.confirm_password.value) { setFormError(authForm, t('auth.mismatch')); f.confirm_password.focus(); return; }
   }
   const btn = $('#ad-submit');
   btn.disabled = true;
@@ -1086,7 +1111,7 @@ authForm.addEventListener('submit', async (e) => {
     const wasEnabled = S.settings.auth_enabled;
     S.settings = res.settings;
     authDialog.close();
-    toast(authMode === 'off' ? 'Mot de passe désactivé' : wasEnabled ? 'Mot de passe modifié' : 'Mot de passe activé');
+    toast(t(authMode === 'off' ? 'toast.authOff' : wasEnabled ? 'toast.authChanged' : 'toast.authOn'));
     render();
   } catch (err) {
     setFormError(authForm, err.message);
@@ -1106,19 +1131,23 @@ $('#import-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file) return;
   try {
-    if (file.size > 10_000_000) throw new Error('Fichier trop volumineux (10 Mo maximum)');
+    if (file.size > 10_000_000) throw new Error(t('import.fileTooLarge'));
     const data = JSON.parse(await file.text());
-    if (data?.format !== 'bernard-export' || !Array.isArray(data.products)) throw new Error('Ce fichier n’est pas un export de Bernard');
+    if (data?.format !== 'bernard-export' || !Array.isArray(data.products)) throw new Error(t('error.import_not_export'));
     importData = data;
-    const when = data.exported_at ? ` du ${new Date(data.exported_at).toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' })}` : '';
     const nSpaces = Array.isArray(data.spaces) ? data.spaces.length : 0;
-    $('#import-summary').innerHTML = `Fichier <strong>${esc(file.name)}</strong>${esc(when)} : <strong>${data.products.length}</strong>
-      ${plural(data.products.length, 'produit', 'produits')} et ${nSpaces} ${plural(nSpaces, 'espace', 'espaces')}.`;
+    const date = data.exported_at && !Number.isNaN(Date.parse(data.exported_at))
+      ? fmtDateTime(data.exported_at, { dateStyle: 'long', timeStyle: 'short' }) : '';
+    $('#import-summary').innerHTML = t(date ? 'import.summaryDated' : 'import.summary', {
+      file: `<strong>${esc(file.name)}</strong>`, date: esc(date),
+      products: `<strong>${esc(t('import.products', { count: data.products.length }))}</strong>`,
+      spaces: esc(t('import.spaces', { count: nSpaces })),
+    });
     setFormError(importForm, '');
     importForm.querySelector('input[value="merge"]').checked = true;
     importDialog.showModal();
   } catch (err) {
-    fail(err instanceof SyntaxError ? new Error('Fichier JSON illisible') : err);
+    fail(err instanceof SyntaxError ? new Error(t('import.unreadable')) : err);
   }
 });
 
@@ -1130,7 +1159,9 @@ importForm.addEventListener('submit', async (e) => {
   try {
     const res = await api('POST', '/api/import', { mode, data: importData });
     importDialog.close();
-    toast(`Import terminé : ${res.products} ${plural(res.products, 'produit', 'produits')}${res.spaces_created ? `, ${res.spaces_created} ${plural(res.spaces_created, 'espace créé', 'espaces créés')}` : ''}`);
+    toast(res.spaces_created
+      ? t('toast.importedSpaces', { products: t('import.products', { count: res.products }), spaces: t('import.spacesCreated', { count: res.spaces_created }) })
+      : t('toast.imported', { products: t('import.products', { count: res.products }) }));
     notifFilled = false;
     await refresh();
   } catch (err) {
@@ -1145,7 +1176,7 @@ const purgeForm = $('#purge-form');
 
 function openPurge() {
   const n = S.products.length;
-  $('#pg-products').textContent = `Supprime les ${n} ${plural(n, 'entrée', 'entrées')} du stock. Les espaces, les réglages et les suggestions de saisie sont conservés.`;
+  $('#pg-products').textContent = t('purge.productsHint', { count: n });
   purgeForm.reset();
   setFormError(purgeForm, '');
   $('button[type="submit"]', purgeForm).disabled = true;
@@ -1154,16 +1185,18 @@ function openPurge() {
 }
 
 purgeForm.elements.confirm.addEventListener('input', (e) => {
-  $('button[type="submit"]', purgeForm).disabled = e.target.value.trim().toUpperCase() !== 'PURGER';
+  // Mot de confirmation propre à la langue ; le serveur attend toujours « PURGER ».
+  $('button[type="submit"]', purgeForm).disabled = e.target.value.trim().toUpperCase() !== t('purge.word');
 });
 
 purgeForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const scope = purgeForm.elements.scope.value;
   try {
-    const res = await api('POST', '/api/purge', { scope, confirm: purgeForm.elements.confirm.value.trim().toUpperCase() });
+    if (purgeForm.elements.confirm.value.trim().toUpperCase() !== t('purge.word')) throw new Error(t('error.purge_confirm_required'));
+    const res = await api('POST', '/api/purge', { scope, confirm: 'PURGER' });
     purgeDialog.close();
-    toast(scope === 'all' ? 'Application réinitialisée' : `Stock vidé (${res.deleted} ${plural(res.deleted, 'entrée supprimée', 'entrées supprimées')})`);
+    toast(scope === 'all' ? t('toast.reset') : t('toast.purged', { count: res.deleted }));
     Object.assign(UI, { q: '', space: '', category: '', expiry: '' });
     store.set('f-space', '');
     notifFilled = false;
@@ -1211,7 +1244,7 @@ $('#notif-form').addEventListener('submit', async (e) => {
     const res = await api('PUT', '/api/settings', body);
     S.settings = res.settings;
     f.webhook_url.value = '';
-    toast('Paramètres enregistrés');
+    toast(t('toast.settingsSaved'));
     render();
   } catch (err) {
     fail(err);
@@ -1223,7 +1256,7 @@ $('#space-add').addEventListener('submit', async (e) => {
   const input = e.target.elements.name;
   try {
     await api('POST', '/api/spaces', { name: input.value });
-    toast(`Espace « ${input.value.trim()} » ajouté`);
+    toast(t('toast.spaceAdded', { name: input.value.trim() }));
     input.value = '';
     await refresh();
   } catch (err) {
@@ -1258,9 +1291,9 @@ $('#spaces').addEventListener('click', async (e) => {
 
 function startRename(li, space) {
   li.innerHTML = `<form class="inline-form grow">
-      <label class="grow"><span class="sr-only">Nouveau nom</span><input type="text" maxlength="40" required value="${esc(space.name)}"></label>
-      <button type="submit" class="btn btn-primary btn-sm">OK</button>
-      <button type="button" class="btn btn-ghost btn-sm" data-cancel>Annuler</button>
+      <label class="grow"><span class="sr-only">${esc(t('spaces.newNameLabel'))}</span><input type="text" maxlength="40" required value="${esc(space.name)}"></label>
+      <button type="submit" class="btn btn-primary btn-sm">${esc(t('common.ok'))}</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-cancel>${esc(t('common.cancel'))}</button>
     </form>`;
   const form = $('form', li);
   const input = $('input', li);
@@ -1272,7 +1305,7 @@ function startRename(li, space) {
     e.preventDefault();
     try {
       await api('PATCH', `/api/spaces/${space.id}`, { name: input.value });
-      toast('Espace renommé');
+      toast(t('toast.spaceRenamed'));
       await refresh();
     } catch (err) {
       fail(err);
@@ -1283,15 +1316,15 @@ function startRename(li, space) {
 async function deleteSpace(space) {
   const others = S.spaces.filter((s) => s.id !== space.id);
   const n = space.product_count;
-  let html = `<p>Supprimer l’espace <strong>${esc(space.name)}</strong> ?</p>`;
+  let html = `<p>${t('spaces.deleteQuestion', { name: `<strong>${esc(space.name)}</strong>` })}</p>`;
   if (n > 0) {
-    html += `<p>Il contient <strong>${n} ${plural(n, 'produit', 'produits')}</strong>. Que voulez-vous en faire ?</p>
+    html += `<p>${t('spaces.deleteContains', { products: `<strong>${esc(t('spaces.count', { count: n }))}</strong>` })}</p>
       ${others.length ? `<label class="check"><input type="radio" name="sd-action" value="move" checked>
-        <span>Les déplacer vers <select id="sd-target" aria-label="Espace de destination">${others.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></span></label>` : ''}
+        <span>${esc(t('spaces.moveTo'))} <select id="sd-target" aria-label="${esc(t('spaces.target'))}">${others.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></span></label>` : ''}
       <label class="check"><input type="radio" name="sd-action" value="delete" ${others.length ? '' : 'checked'}>
-        <span>Les supprimer définitivement</span></label>`;
+        <span>${esc(t('spaces.deleteProducts'))}</span></label>`;
   }
-  const d = await confirmDialog({ title: 'Supprimer un espace', html });
+  const d = await confirmDialog({ title: t('spaces.deleteTitle'), html });
   if (!d) return;
   let qs = '';
   if (n > 0) {
@@ -1299,7 +1332,7 @@ async function deleteSpace(space) {
     qs = action === 'move' ? `?products=move&target=${$('#sd-target', d).value}` : '?products=delete';
   }
   await api('DELETE', `/api/spaces/${space.id}${qs}`);
-  toast(`Espace « ${space.name} » supprimé`);
+  toast(t('toast.spaceDeleted', { name: space.name }));
   await refresh();
 }
 
@@ -1327,9 +1360,9 @@ document.addEventListener('click', async (e) => {
     input.select();
     try {
       await navigator.clipboard.writeText(input.value);
-      toast('Clé copiée');
+      toast(t('toast.keyCopied'));
     } catch {
-      toast('Copie impossible : sélectionnez la clé et copiez-la à la main', { error: true });
+      toast(t('toast.copyFailed'), { error: true });
     }
     return;
   }
@@ -1350,27 +1383,28 @@ document.addEventListener('click', async (e) => {
   try {
     if (action === 'demo') {
       const res = await api('POST', '/api/demo', {});
-      toast(`${res.inserted} produits d’exemple ajoutés`);
+      toast(t('toast.demoLoaded', { count: res.inserted }));
       await refresh();
       if (UI.view === 'settings') location.hash = '#/';
     } else if (action === 'test-webhook') {
       const url = $('#notif-form').elements.webhook_url.value.trim();
       await api('POST', '/api/notifications/test', url ? { webhook_url: url } : {});
-      toast('Message de test envoyé : vérifiez votre salon Discord');
+      toast(t('toast.testSent'));
     } else if (action === 'send-now') {
       const res = await api('POST', '/api/notifications/send', {});
-      toast(res.sent ? `Récapitulatif envoyé (${res.count} ${plural(res.count, 'alerte', 'alertes')})` : res.reason);
+      toast(res.sent ? t('toast.digestSent', { count: res.count })
+        : res.reason_code ? t(`digest.reason.${res.reason_code}`) : res.reason);
       await refresh();
     } else if (action === 'clear-webhook') {
       const ok = await confirmDialog({
-        title: 'Retirer le webhook ?',
-        html: '<p>Les alertes Discord ne seront plus envoyées tant qu’un nouveau webhook n’aura pas été renseigné.</p>',
-        ok: 'Retirer',
+        title: t('notif.clearTitle'),
+        html: `<p>${esc(t('notif.clearText'))}</p>`,
+        ok: t('notif.clearOk'),
       });
       if (ok) {
         const res = await api('PUT', '/api/settings', { clear_webhook: true });
         S.settings = res.settings;
-        toast('Webhook retiré');
+        toast(t('toast.webhookCleared'));
         render();
       }
     }
@@ -1383,18 +1417,15 @@ document.addEventListener('click', async (e) => {
 
 /* ================= Thème et couleur d'accent (préférences de l'appareil) ================= */
 
-const ACCENTS = [
-  ['sapin', 'Vert sapin'], ['sarcelle', 'Sarcelle'], ['bleu', 'Bleu'], ['indigo', 'Indigo'], ['prune', 'Prune'],
-  ['framboise', 'Framboise'], ['terracotta', 'Terracotta'], ['moutarde', 'Moutarde'], ['ardoise', 'Ardoise'],
-];
+const ACCENTS = ['sapin', 'sarcelle', 'bleu', 'indigo', 'prune', 'framboise', 'terracotta', 'moutarde', 'ardoise'];
 const root = document.documentElement;
 const effectiveTheme = () => (root.dataset.theme === 'dark' ? 'dark' : 'light');
 
 function syncThemeButton() {
-  const next = effectiveTheme() === 'dark' ? 'clair' : 'sombre';
+  const label = t(effectiveTheme() === 'dark' ? 'theme.toLight' : 'theme.toDark');
   const b = $('.theme-btn');
-  b.setAttribute('aria-label', `Passer au thème ${next}`);
-  b.title = `Passer au thème ${next}`;
+  b.setAttribute('aria-label', label);
+  b.title = label;
 }
 
 function toggleTheme() {
@@ -1406,12 +1437,37 @@ syncThemeButton();
 
 $('#accent-btn').addEventListener('click', (e) => {
   const current = root.dataset.accent || 'sapin';
-  showMenu(e.currentTarget, ACCENTS.map(([id, label]) => ({
-    value: id, checked: id === current, html: `<span class="swatch sw-${id}" aria-hidden="true"></span><span>${label}</span>`,
+  showMenu(e.currentTarget, ACCENTS.map((id) => ({
+    value: id, checked: id === current, html: `<span class="swatch sw-${id}" aria-hidden="true"></span><span>${esc(t(`accent.${id}`))}</span>`,
   })), (id) => {
     root.dataset.accent = id;
     try { localStorage.setItem('bernard-accent', id); } catch { /* ignoré */ }
-  }, { label: 'Couleur d’accentuation' });
+  }, { label: t('accent.label') });
+});
+
+/* ================= Langue (préférence de l'appareil) ================= */
+
+function syncLangButton() {
+  $('#lang-code').textContent = getLang().toUpperCase();
+}
+syncLangButton();
+
+$('#lang-btn').addEventListener('click', (e) => {
+  const stored = storedLang();
+  const items = [{ value: '', label: t('lang.auto'), checked: !stored }]
+    .concat(LANGS.map((l) => ({ value: l, checked: stored === l, html: `<span lang="${l}">${esc(LANG_NAMES[l])}</span>` })));
+  showMenu(e.currentTarget, items, (value) => setLang(value || null), { label: t('lang.label') });
+});
+
+$('#lang-select').addEventListener('change', (e) => setLang(e.target.value || null));
+
+// Changement de langue : formats, libellés dynamiques et vue courante sont recalculés.
+onLangChange(() => {
+  setFormats();
+  syncLangButton();
+  syncThemeButton();
+  if (pd.open && !editing) syncCategory();
+  render();
 });
 
 // Raccourci clavier : « n » pour ajouter un produit
@@ -1431,5 +1487,5 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('hashchange', onRoute);
 UI.view = VIEWS[location.hash] || 'all';
 refresh().catch((err) => {
-  $('#loading').textContent = `Impossible de charger les données : ${err.message}`;
+  $('#loading').textContent = t('app.loadError', { message: err.message });
 });
