@@ -39,7 +39,9 @@ const cleanQuantity = (v) => {
   const n = typeof v === 'string' ? Number(v.replace(',', '.')) : v;
   if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) throw bad('La quantité doit être supérieure à 0', 'quantity_positive');
   if (n > 100000) throw bad('Quantité trop grande', 'quantity_too_large');
-  return Math.round(n * 1000) / 1000;
+  const rounded = Math.round(n * 1000) / 1000;
+  if (rounded <= 0) throw bad('La quantité doit être supérieure à 0', 'quantity_positive');
+  return rounded;
 };
 
 const cleanDate = (v, label, code) => {
@@ -576,8 +578,13 @@ export function createApp({ db, publicDir, log = console }) {
   }
 
   return async function handler(req, res) {
-    const url = new URL(req.url, 'http://localhost');
+    let url;
     try {
+      try {
+        url = new URL(req.url, 'http://localhost');
+      } catch {
+        throw bad('Adresse de requête invalide');
+      }
       const loggedIn = !authEnabled(db) || Boolean(currentSession(db, req));
       if (!url.pathname.startsWith('/api/')) {
         if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée');
