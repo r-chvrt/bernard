@@ -36,6 +36,15 @@ test('espaces par défaut créés au premier lancement', async () => {
   assert.equal(s.products.length, 0);
 });
 
+test('quantité arrondie à zéro refusée sans modifier le stock', async () => {
+  const before = await state();
+  const product = { name: 'Quantité minuscule', space_id: before.spaces[0].id, quantity: 0.0001, state: 'closed' };
+  const result = await call('POST', '/api/products', product);
+  assert.equal(result.status, 400);
+  assert.equal(result.data.code, 'quantity_positive');
+  assert.deepEqual((await state()).products, before.products);
+});
+
 test('ajout avec les seuls champs obligatoires et validation', async () => {
   const { spaces } = await state();
   const ok = await call('POST', '/api/products', { name: '  Pâtes ', space_id: spaces[0].id, quantity: 3, state: 'closed' });
