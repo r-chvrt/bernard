@@ -104,7 +104,9 @@ export const SETTING_DEFAULTS = {
 };
 
 // Clés internes (jamais modifiables via l'API).
-export const INTERNAL_KEYS = ['last_digest_period', 'last_digest_signature', 'last_digest_at', 'last_digest_status'];
+export const INTERNAL_KEYS = [
+  'last_digest_period', 'last_digest_signature', 'last_digest_at', 'last_digest_status', 'last_digest_code', 'last_digest_params',
+];
 
 export function getSettings(db) {
   const rows = db.prepare('SELECT key, value FROM settings').all();

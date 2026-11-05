@@ -11,22 +11,30 @@
   <link rel="manifest" href="manifest.webmanifest">
   <script src="theme.js"></script>
   <link rel="stylesheet" href="app.css">
-  <script src="login.js" defer></script>
+  <script type="module" src="login.js"></script>
 </head>
 <body class="login-page">
   <main class="login-wrap">
     <form id="login-form" class="login-card" novalidate>
       <img src="icon.svg" alt="" width="56" height="56">
       <h1>Bernard</h1>
-      <p class="hint">Stock du foyer — saisissez le mot de passe pour continuer.</p>
+      <p class="hint" data-i18n="login.hint">Stock du foyer — saisissez le mot de passe pour continuer.</p>
       <input type="text" name="username" autocomplete="username" value="bernard" hidden>
       <label class="field">
-        <span class="sr-only">Mot de passe</span>
-        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Mot de passe" required autofocus>
+        <span class="sr-only" data-i18n="login.password">Mot de passe</span>
+        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Mot de passe" data-i18n-ph="login.password" required autofocus>
       </label>
       <p class="form-error" role="alert" hidden></p>
-      <button type="submit" class="btn btn-primary">Se connecter</button>
-      <p class="login-help">Mot de passe oublié ? Consultez la section « Mot de passe » du README.</p>
+      <button type="submit" class="btn btn-primary" data-i18n="login.submit">Se connecter</button>
+      <p class="login-help" data-i18n="login.help">Mot de passe oublié ? Consultez la section « Mot de passe » du README.</p>
+      <label class="login-lang">
+        <span class="sr-only" data-i18n="lang.label">Langue</span>
+        <select id="lang-select">
+          <option value="" data-i18n="lang.auto">Automatique (langue du navigateur)</option>
+          <option value="fr">Français</option>
+          <option value="en">English</option>
+        </select>
+      </label>
     </form>
   </main>
 </body>

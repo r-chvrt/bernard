@@ -24,7 +24,7 @@ class HttpError extends Error {
   }
 }
 const bad = (message, code, params) => new HttpError(400, message, code, params);
-const notFound = (message = 'Introuvable') => new HttpError(404, message);
+const notFound = (message = 'Introuvable', code = 'not_found') => new HttpError(404, message, code);
 
 /* ---------- Validation ---------- */
 
@@ -123,8 +123,8 @@ route('GET', '/api/health', () => ({ ok: true }), { open: true });
 /* Connexion (mot de passe unique, facultatif) */
 
 const cleanPassword = (v) => {
-  if (typeof v !== 'string' || v.length < 6) throw bad('Le mot de passe doit contenir au moins 6 caractères');
-  if (v.length > 200) throw bad('Mot de passe trop long');
+  if (typeof v !== 'string' || v.length < 6) throw bad('Le mot de passe doit contenir au moins 6 caractères', 'password_too_short', { min: 6 });
+  if (v.length > 200) throw bad('Mot de passe trop long', 'password_too_long', { max: 200 });
   return v;
 };
 
@@ -132,10 +132,10 @@ route('POST', '/api/login', ({ db, body, req, res, limiter }) => {
   if (!authEnabled(db)) return { ok: true };
   const ip = req.socket.remoteAddress || '?';
   const wait = limiter.check(ip);
-  if (wait) throw new HttpError(429, `Trop de tentatives : réessayez dans ${wait} s`);
+  if (wait) throw new HttpError(429, `Trop de tentatives : réessayez dans ${wait} s`, 'too_many_attempts', { seconds: wait });
   if (!verifyPassword(String(body.password ?? ''), getSettings(db).auth_password)) {
     limiter.fail(ip);
-    throw new HttpError(401, 'Mot de passe incorrect');
+    throw new HttpError(401, 'Mot de passe incorrect', 'password_incorrect');
   }
   limiter.success(ip);
   startSession(db, req, res);
@@ -150,7 +150,7 @@ route('POST', '/api/logout', ({ db, req, res }) => {
 /** Vérifie le mot de passe actuel avant toute modification de la protection. */
 function checkCurrent(db, body) {
   const stored = getSettings(db).auth_password;
-  if (stored && !verifyPassword(String(body.current_password ?? ''), stored)) throw bad('Mot de passe actuel incorrect');
+  if (stored && !verifyPassword(String(body.current_password ?? ''), stored)) throw bad('Mot de passe actuel incorrect', 'current_password_incorrect');
 }
 
 route('PUT', '/api/auth', ({ db, body, req, res }) => {
@@ -195,7 +195,7 @@ route('GET', '/api/v1/stock', ({ db }) => {
 
 route('POST', '/api/spaces', ({ db, body }) => {
   const name = cleanName(body.name, 40);
-  if (db.prepare('SELECT 1 FROM spaces WHERE name = ?').get(name)) throw bad('Cet espace existe déjà');
+  if (db.prepare('SELECT 1 FROM spaces WHERE name = ?').get(name)) throw bad('Cet espace existe déjà', 'space_exists');
   const { pos } = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM spaces').get();
   const id = Number(db.prepare('INSERT INTO spaces (name, position) VALUES (?, ?)').run(name, pos).lastInsertRowid);
   return { id };
@@ -203,10 +203,10 @@ route('POST', '/api/spaces', ({ db, body }) => {
 
 route('PATCH', '/api/spaces/:id', ({ db, params, body }) => {
   const space = db.prepare('SELECT * FROM spaces WHERE id = ?').get(params.id);
-  if (!space) throw notFound('Espace introuvable');
+  if (!space) throw notFound('Espace introuvable', 'space_not_found');
   if (body.name !== undefined) {
     const name = cleanName(body.name, 40);
-    if (db.prepare('SELECT 1 FROM spaces WHERE name = ? AND id <> ?').get(name, params.id)) throw bad('Cet espace existe déjà');
+    if (db.prepare('SELECT 1 FROM spaces WHERE name = ? AND id <> ?').get(name, params.id)) throw bad('Cet espace existe déjà', 'space_exists');
     db.prepare('UPDATE spaces SET name = ? WHERE id = ?').run(name, params.id);
   }
   if (body.move === 'up' || body.move === 'down') {
@@ -225,7 +225,7 @@ route('PATCH', '/api/spaces/:id', ({ db, params, body }) => {
 
 route('DELETE', '/api/spaces/:id', ({ db, params, query }) => {
   const space = db.prepare('SELECT * FROM spaces WHERE id = ?').get(params.id);
-  if (!space) throw notFound('Espace introuvable');
+  if (!space) throw notFound('Espace introuvable', 'space_not_found');
   return transaction(db, () => {
     const { n } = db.prepare('SELECT COUNT(*) AS n FROM products WHERE space_id = ?').get(params.id);
     if (n > 0) {
@@ -233,13 +233,13 @@ route('DELETE', '/api/spaces/:id', ({ db, params, query }) => {
       if (action === 'move') {
         const target = Number(query.get('target'));
         if (target === params.id || !db.prepare('SELECT 1 FROM spaces WHERE id = ?').get(target)) {
-          throw bad('Choisissez un autre espace de destination');
+          throw bad('Choisissez un autre espace de destination', 'space_target_invalid');
         }
         db.prepare('UPDATE products SET space_id = ?, updated_at = ? WHERE space_id = ?').run(target, now(), params.id);
       } else if (action === 'delete') {
         db.prepare('DELETE FROM products WHERE space_id = ?').run(params.id);
       } else {
-        throw new HttpError(409, `Cet espace contient ${n} produit(s) : déplacez-les ou confirmez leur suppression`);
+        throw new HttpError(409, `Cet espace contient ${n} produit(s) : déplacez-les ou confirmez leur suppression`, 'space_not_empty', { count: n });
       }
     }
     db.prepare('DELETE FROM spaces WHERE id = ?').run(params.id);
@@ -265,7 +265,7 @@ route('POST', '/api/products', ({ db, body }) => {
 
 route('PATCH', '/api/products/:id', ({ db, params, body }) => {
   const current = getProduct(db, params.id);
-  if (!current) throw notFound('Produit introuvable');
+  if (!current) throw notFound('Produit introuvable', 'product_not_found');
   const p = cleanProduct(db, body, current);
   return transaction(db, () => {
     db.prepare(
@@ -282,7 +282,7 @@ route('PATCH', '/api/products/:id', ({ db, params, body }) => {
 
 route('DELETE', '/api/products/:id', ({ db, params }) => {
   const { changes } = db.prepare('DELETE FROM products WHERE id = ?').run(params.id);
-  if (!changes) throw notFound('Produit introuvable');
+  if (!changes) throw notFound('Produit introuvable', 'product_not_found');
   return { ok: true };
 });
 
@@ -292,10 +292,10 @@ route('DELETE', '/api/products/:id', ({ db, params }) => {
  */
 route('POST', '/api/products/:id/open', ({ db, params, body }) => {
   const src = getProduct(db, params.id);
-  if (!src) throw notFound('Produit introuvable');
-  if (src.state !== 'closed') throw bad('Ce produit est déjà ouvert');
+  if (!src) throw notFound('Produit introuvable', 'product_not_found');
+  if (src.state !== 'closed') throw bad('Ce produit est déjà ouvert', 'product_already_open');
   const qty = cleanQuantity(body.quantity ?? Math.min(1, src.quantity));
-  if (qty > src.quantity + 1e-9) throw bad(`Il n'y a que ${src.quantity} ${src.unit} en stock`);
+  if (qty > src.quantity + 1e-9) throw bad(`Il n'y a que ${src.quantity} ${src.unit} en stock`, 'open_quantity_exceeds', { available: src.quantity, unit: src.unit });
   const opened_on = cleanDate(body.opened_on, "Date d'ouverture", 'opened_date_invalid');
 
   return transaction(db, () => {
@@ -326,7 +326,7 @@ route('POST', '/api/products/:id/open', ({ db, params, body }) => {
 
 route('POST', '/api/demo', ({ db }) => {
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM products').get();
-  if (n > 0) throw bad("Les exemples ne peuvent être chargés que lorsque le stock est vide");
+  if (n > 0) throw bad("Les exemples ne peuvent être chargés que lorsque le stock est vide", 'demo_stock_not_empty');
   const settings = getSettings(db);
   const tz = isValidTimeZone(settings.timezone) ? settings.timezone : 'UTC';
   return { inserted: loadDemo(db, localParts(tz).date) };
@@ -367,11 +367,11 @@ route('GET', '/api/export', ({ db, res }) => {
 
 route('POST', '/api/import', ({ db, body }) => {
   const { data, mode } = body;
-  if (mode !== 'replace' && mode !== 'merge') throw bad('Mode d’import invalide');
+  if (mode !== 'replace' && mode !== 'merge') throw bad('Mode d’import invalide', 'import_mode_invalid');
   if (!data || data.format !== EXPORT_FORMAT || !Array.isArray(data.products)) {
-    throw bad('Ce fichier n’est pas un export de Bernard');
+    throw bad('Ce fichier n’est pas un export de Bernard', 'import_not_export');
   }
-  if (data.products.length > 20000) throw bad('Fichier trop volumineux');
+  if (data.products.length > 20000) throw bad('Fichier trop volumineux', 'import_too_large', { max: 20000 });
 
   return transaction(db, () => {
     if (mode === 'replace') db.exec('DELETE FROM products; DELETE FROM name_history; DELETE FROM spaces;');
@@ -392,12 +392,15 @@ route('POST', '/api/import', ({ db, body }) => {
     const ts = now();
     data.products.forEach((raw, i) => {
       try {
-        if (!raw || typeof raw !== 'object') throw bad('entrée invalide');
+        if (!raw || typeof raw !== 'object') throw bad('entrée invalide', 'entry_invalid');
         const p = cleanProduct(db, { ...raw, space_id: ensureSpace(raw.space) });
         const created = typeof raw.created_at === 'string' && !Number.isNaN(Date.parse(raw.created_at)) ? raw.created_at : ts;
         insertProduct(db, { ...p, created_at: created }, ts);
       } catch (err) {
-        throw bad(`Produit n° ${i + 1} (${String(raw?.name ?? '?').slice(0, 40)}) : ${err.message}`);
+        const name = String(raw?.name ?? '?').slice(0, 40);
+        throw bad(`Produit n° ${i + 1} (${name}) : ${err.message}`, 'import_product_invalid', {
+          index: i + 1, name, reason: err.message, ...(err.code && { reason_code: err.code }), ...(err.params && { reason_params: err.params }),
+        });
       }
     });
     for (const h of Array.isArray(data.history) ? data.history : []) {
@@ -419,8 +422,8 @@ route('POST', '/api/import', ({ db, body }) => {
 }, { maxBody: 10_000_000 });
 
 route('POST', '/api/purge', ({ db, body }) => {
-  if (body.confirm !== 'PURGER') throw bad('Tapez PURGER pour confirmer');
-  if (body.scope !== 'products' && body.scope !== 'all') throw bad('Type de purge invalide');
+  if (body.confirm !== 'PURGER') throw bad('Tapez PURGER pour confirmer', 'purge_confirm_required');
+  if (body.scope !== 'products' && body.scope !== 'all') throw bad('Type de purge invalide', 'purge_scope_invalid');
   return transaction(db, () => {
     const { n } = db.prepare('SELECT COUNT(*) AS n FROM products').get();
     db.exec('DELETE FROM products');
@@ -442,23 +445,23 @@ function cleanSettings(body) {
   for (const [key, min, max] of [['expiry_days', 0, 365], ['open_days', 1, 365], ['weekday', 1, 7]]) {
     if (body[key] === undefined) continue;
     const n = Number(body[key]);
-    if (!Number.isInteger(n) || n < min || n > max) throw bad(`Valeur invalide pour ${key} (entre ${min} et ${max})`);
+    if (!Number.isInteger(n) || n < min || n > max) throw bad(`Valeur invalide pour ${key} (entre ${min} et ${max})`, 'setting_out_of_range', { key, min, max });
     out[key] = n;
   }
   if (body.frequency !== undefined) {
-    if (!['daily', 'weekly'].includes(body.frequency)) throw bad('Fréquence invalide');
+    if (!['daily', 'weekly'].includes(body.frequency)) throw bad('Fréquence invalide', 'frequency_invalid');
     out.frequency = body.frequency;
   }
   if (body.time !== undefined) {
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(body.time)) throw bad('Heure invalide (format HH:MM)');
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(body.time)) throw bad('Heure invalide (format HH:MM)', 'time_invalid');
     out.time = body.time;
   }
   if (body.timezone !== undefined) {
-    if (!isValidTimeZone(body.timezone)) throw bad('Fuseau horaire inconnu');
+    if (!isValidTimeZone(body.timezone)) throw bad('Fuseau horaire inconnu', 'timezone_unknown');
     out.timezone = body.timezone;
   }
   if (body.webhook_url !== undefined && body.webhook_url !== '') {
-    if (!isDiscordWebhook(body.webhook_url)) throw bad("L'URL ne ressemble pas à un webhook Discord (https://discord.com/api/webhooks/…)");
+    if (!isDiscordWebhook(body.webhook_url)) throw bad("L'URL ne ressemble pas à un webhook Discord (https://discord.com/api/webhooks/…)", 'webhook_url_invalid');
     out.webhook_url = body.webhook_url.trim();
   }
   if (body.clear_webhook === true) out.webhook_url = '';
@@ -476,10 +479,10 @@ route('PUT', '/api/settings', ({ db, body }) => {
 route('POST', '/api/notifications/test', async ({ db, body }) => {
   let url = webhookUrl(getSettings(db));
   if (body.webhook_url) {
-    if (!isDiscordWebhook(body.webhook_url)) throw bad("L'URL ne ressemble pas à un webhook Discord");
+    if (!isDiscordWebhook(body.webhook_url)) throw bad("L'URL ne ressemble pas à un webhook Discord", 'webhook_url_invalid');
     url = body.webhook_url;
   }
-  if (!url) throw bad("Renseignez d'abord l'URL du webhook");
+  if (!url) throw bad("Renseignez d'abord l'URL du webhook", 'webhook_missing');
   await sendWebhook(url, {
     username: 'Bernard',
     content: '✅ **Test réussi** : les alertes du stock alimentaire arriveront ici.',
@@ -523,7 +526,7 @@ async function readBody(req, maxBody) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > maxBody) throw new HttpError(413, 'Requête trop volumineuse');
+    if (size > maxBody) throw new HttpError(413, 'Requête trop volumineuse', 'request_too_large');
     chunks.push(chunk);
   }
   if (!size) return {};
@@ -531,7 +534,7 @@ async function readBody(req, maxBody) {
     const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     return data && typeof data === 'object' ? data : {};
   } catch {
-    throw bad('JSON invalide');
+    throw bad('JSON invalide', 'json_invalid');
   }
 }
 
@@ -583,24 +586,24 @@ export function createApp({ db, publicDir, log = console }) {
       try {
         url = new URL(req.url, 'http://localhost');
       } catch {
-        throw bad('Adresse de requête invalide');
+        throw bad('Adresse de requête invalide', 'request_target_invalid');
       }
       const loggedIn = !authEnabled(db) || Boolean(currentSession(db, req));
       if (!url.pathname.startsWith('/api/')) {
-        if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée');
+        if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
         return await serveStatic(req, res, url.pathname, loggedIn);
       }
       const mutating = req.method !== 'GET' && req.method !== 'HEAD';
       // Exiger du JSON bloque les requêtes inter-sites de formulaires simples (CSRF).
       if (mutating && !String(req.headers['content-type'] || '').startsWith('application/json')) {
-        throw new HttpError(415, 'Content-Type application/json attendu');
+        throw new HttpError(415, 'Content-Type application/json attendu', 'json_content_type_required');
       }
       for (const r of routes) {
         const m = r.method === req.method && url.pathname.match(r.re);
         if (!m) continue;
         if (r.apiKey) requireApiKey(req);
         else if (!loggedIn && !r.open) {
-          return sendJson(res, 401, { error: 'Connexion requise', auth_required: true });
+          return sendJson(res, 401, { error: 'Connexion requise', code: 'auth_required', auth_required: true });
         }
         const params = Object.fromEntries(r.keys.map((k, i) => [k, Number(m[i + 1])]));
         const body = mutating ? await readBody(req, r.maxBody) : {};
@@ -608,14 +611,15 @@ export function createApp({ db, publicDir, log = console }) {
         if (result !== SENT) sendJson(res, 200, result);
         return;
       }
-      throw notFound('Route inconnue');
+      throw notFound('Route inconnue', 'route_unknown');
     } catch (err) {
-      if (err instanceof HttpError) return sendJson(res, err.status, {
-        error: err.message, ...(err.code && { code: err.code }), ...(err.params && { params: err.params }),
-      });
-      if (err instanceof WebhookError) return sendJson(res, 502, { error: err.message });
-      log.error?.(`[erreur] ${req.method} ${url.pathname} : ${err?.message}`);
-      return sendJson(res, 500, { error: 'Erreur interne du serveur' });
+      // L'API externe v1 garde ses réponses d'erreur historiques ({ error } seul, cf. docs/api-v1.md).
+      const coded = (data, code, params) =>
+        url?.pathname.startsWith('/api/v1/') ? data : { ...data, ...(code && { code }), ...(params && { params }) };
+      if (err instanceof HttpError) return sendJson(res, err.status, coded({ error: err.message }, err.code, err.params));
+      if (err instanceof WebhookError) return sendJson(res, 502, coded({ error: err.message }, err.code, err.params));
+      log.error?.(`[erreur] ${req.method} ${url?.pathname} : ${err?.message}`);
+      return sendJson(res, 500, coded({ error: 'Erreur interne du serveur' }, 'internal_error'));
     }
   };
 }

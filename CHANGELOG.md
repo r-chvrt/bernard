@@ -6,6 +6,12 @@ Les migrations de base de données sont automatiques au démarrage.
 ## [Non publié]
 
 ### Ajouté
+- **Interface en français et en anglais** : langue du navigateur par défaut, choix mémorisé sur l’appareil (bouton FR / EN,
+  Paramètres → Langue, page de connexion), changement sans rechargement. Messages d’erreur traduits à partir des codes
+  stables renvoyés par l’API.
+- Codes d’erreur stables (`code`, `params`) sur toutes les erreurs de l’API interne (connexion, espaces, produits, import,
+  purge, réglages, webhook, requêtes invalides) et code du dernier récapitulatif Discord ; liste dans `docs/erreurs-i18n.md`.
+  Le texte `error` et l’API externe v1 sont inchangés.
 - **Clé d’API** (Paramètres → Administration) et **API externe en lecture seule** `GET /api/v1/stock` : aliments
   regroupés et quantités disponibles (estimation des produits entamés, péremption), pour des applications comme Lulu.
   La clé n’est affichée qu’à sa création (empreinte SHA-256 seule conservée), essais invalides ralentis.
