@@ -1,6 +1,6 @@
 # Image légère : Node.js 24 LTS (SQLite intégré via node:sqlite), aucune dépendance npm.
 # Version et empreinte épinglées : Dependabot propose les mises à jour (voir .github/dependabot.yml).
-FROM node:24.22.2-alpine3.24@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
+FROM node:24.22.2-alpine3.24@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
 
 ENV NODE_ENV=production \
     NODE_OPTIONS=--disable-warning=ExperimentalWarning \
